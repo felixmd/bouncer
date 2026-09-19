@@ -11,15 +11,17 @@ See `PRD.md` for product logic and `TECHNICAL_SPEC.md` for architecture. This fi
 ## Commands
 
 ```bash
-uv sync                                    # install
-uv run python -m web.app                   # run the demo (localhost:5001)
-uv run python -m feed.reddit_fetch URL     # dev-time: fetch a thread to data/threads/
-uv run python -m calibrate.sweep           # threshold sweep against Jigsaw
-uv run pytest                              # tests
-uv run ruff check --fix .                  # lint
+uv sync                                           # install
+uv run --env-file .env python -m web.app          # run the demo (localhost:5001)
+uv run --env-file .env python -m calibrate.sweep  # threshold sweep against Jigsaw
+uv run python -m feed.reddit_fetch URL            # dev-time: fetch a thread to data/threads/
+uv run pytest                                     # tests
+uv run ruff check --fix .                         # lint
 ```
 
 `TYPESAFE_API_KEY` must be set. Never commit it, never inline it, never put it in a fixture.
+It lives in `.env` (gitignored, copied from `.env.example`) and reaches the process via
+`uv run --env-file .env`. The SDK reads the variable itself — never pass `api_key=` in code.
 
 ## Hard invariants
 

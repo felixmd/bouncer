@@ -29,15 +29,21 @@ Set your API key — never commit it, never inline it, never put it in a fixture
 cp .env.example .env   # then fill in TYPESAFE_API_KEY
 ```
 
+`.env` is gitignored. The SDK reads `TYPESAFE_API_KEY` from the environment and
+sends it as a bearer token; `uv run --env-file .env` is what gets it there.
+
 ## Commands
 
 ```bash
-uv run python -m web.app                   # run the demo (localhost:5001)
-uv run python -m feed.reddit_fetch URL     # dev-time: fetch a thread to data/threads/
-uv run python -m calibrate.sweep           # threshold sweep against Jigsaw
-uv run pytest                              # tests (no network, no API key needed)
-uv run ruff check --fix .                  # lint
+uv run --env-file .env python -m web.app          # run the demo (localhost:5001)
+uv run --env-file .env python -m calibrate.sweep  # threshold sweep against Jigsaw
+uv run python -m feed.reddit_fetch URL            # dev-time: fetch a thread to data/threads/
+uv run pytest                                     # tests (no network, no key)
+uv run ruff check --fix .                         # lint
 ```
+
+Only the two commands that call Jev need the key. The fetch script talks to
+Reddit, and the tests run against recorded fixtures by design.
 
 ## Layout
 
