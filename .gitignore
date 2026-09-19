@@ -1,0 +1,22 @@
+# Secrets — TYPESAFE_API_KEY must never be committed
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Experiment and calibration output
+calibrate/out/
+data/jigsaw/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
