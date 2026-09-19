@@ -9,13 +9,10 @@ surfaced in the UI (see PRD §4.2).
 # Pin the version. Never "jev-latest" — it moves, and it will move under
 # thresholds tuned against it. Log the `model` field from the response, not this.
 #
-# UNSET ON PURPOSE. The SDK's own default is "jev-latest" (see
-# typesafe_sdk.constants.DEFAULT_MODEL), so leaving this None would silently
-# inherit the moving target. Resolve the concrete version once, with a key set:
-#
-#     uv run python -c "from typesafe_sdk import TypeSafeClient; \
-#         print([m.id for m in TypeSafeClient().models.list().data])"
-JEV_MODEL: str | None = None
+# The SDK's own default is "jev-latest" (typesafe_sdk.constants.DEFAULT_MODEL),
+# which is the moving target this must not be. Resolved from the `model` field
+# of a live response during the 15-comment smoke run on 2026-09-19.
+JEV_MODEL = "jev-1.13.0"
 
 API_TIMEOUT_S = 30
 MAX_RETRIES = 3
@@ -35,9 +32,19 @@ MAX_CONCURRENT_REQUESTS = 32
 # knee is unmeasured and the throughput story depends on it.
 BATCH_SIZE: int | None = None
 
+# --- Scoring scale ---------------------------------------------------------
+
+# Score.criteria is one description per level *starting at zero*, so N levels
+# give raw scores in 0..N-1. The spec's "0-10 Score" would need 11 levels, one
+# past the documented maximum of 10. Five levels are what a human can actually
+# write and edit live; judge.rubric.normalise maps them onto 0-10 so the
+# thresholds below stay on the scale the spec and the UI talk about.
+SCORE_RUBRIC_LEVELS = 5
+SCORE_SCALE_MAX = 10.0
+
 # --- Lane policy (TECHNICAL_SPEC §4) ---------------------------------------
 
-SEVERITY_THRESHOLD = 6.0  # on a 0-10 Score
+SEVERITY_THRESHOLD = 6.0  # on the normalised 0-10 scale
 CONFIDENCE_FLOOR = 0.80  # provisional; set from the Jigsaw sweep, not by taste
 LOW_SUBSTANCE_THRESHOLD = 3.0
 LOW_ON_TOPIC_THRESHOLD = 3.0
