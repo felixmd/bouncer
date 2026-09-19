@@ -16,7 +16,8 @@ a human decides. The claim the demo makes is not "this model is right" — it is
 
 ## Setup
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.12+.
+Requires [uv](https://docs.astral.sh/uv/). The interpreter is pinned to Python
+3.12 in `.python-version`; `uv sync` will fetch it if it isn't present.
 
 ```bash
 uv sync
@@ -32,7 +33,7 @@ cp .env.example .env   # then fill in TYPESAFE_API_KEY
 
 ```bash
 uv run python -m web.app                   # run the demo (localhost:5001)
-uv run python scripts/reddit_fetch.py URL  # dev-time: fetch a thread to data/threads/
+uv run python -m feed.reddit_fetch URL     # dev-time: fetch a thread to data/threads/
 uv run python -m calibrate.sweep           # threshold sweep against Jigsaw
 uv run pytest                              # tests (no network, no API key needed)
 uv run ruff check --fix .                  # lint

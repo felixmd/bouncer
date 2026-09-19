@@ -13,7 +13,7 @@ See `PRD.md` for product logic and `TECHNICAL_SPEC.md` for architecture. This fi
 ```bash
 uv sync                                    # install
 uv run python -m web.app                   # run the demo (localhost:5001)
-uv run python scripts/reddit_fetch.py URL  # dev-time: fetch a thread to data/threads/
+uv run python -m feed.reddit_fetch URL     # dev-time: fetch a thread to data/threads/
 uv run python -m calibrate.sweep           # threshold sweep against Jigsaw
 uv run pytest                              # tests
 uv run ruff check --fix .                  # lint
