@@ -416,3 +416,90 @@ what §4 said the fix must not be.
 **Untested.** The probe records scores and confidences but not the
 distributions, so measuring it needs one more run. This is the next task, and it
 is more likely to matter than any further rubric work.
+
+## 13. The gate, measured. §12's hypothesis was half right
+
+`experiments/gate_ab.py`, 2026-09-20. 300 labelled Civil Comments and 300
+Hacker News comments, capturing the full per-level distribution.
+
+### The half that was wrong: it is not more discriminative
+
+§12 implied the scalar gate was letting good decisions pen and that fixing it
+would buy accuracy. It does not. Ranking comments by each gate and taking the
+top slice, at **matched auto-handled volume**:
+
+| auto-handled | scalar conf | decision conf | delta |
+|---|---|---|---|
+| 20% | 0.933 | 0.900 | −0.033 |
+| 40% | 0.950 | 0.942 | −0.008 |
+| 60% | 0.894 | 0.917 | +0.022 |
+| 80% | 0.858 | 0.871 | +0.013 |
+| 100% | 0.810 | 0.810 | 0.000 |
+
+No consistent direction, and the two gates rank comments at a correlation of
+**0.845**. It is the same curve. The 83%-auto-handled figure below was always
+available from the scalar gate — at a floor near 0.30.
+
+**Anyone reporting this as an accuracy win is reading a volume change.** It is
+the same mistake §8 records, in a new place.
+
+### The half that was right: it measures the thing the lane turns on
+
+Scalar confidence has mean 0.612 on a real thread; decision confidence has mean
+0.912. So the *same* floor means completely different things:
+
+| floor | auto-handled, scalar | auto-handled, decision |
+|---|---|---|
+| 0.85 | 17% | **83%** |
+| 0.90 | 11% | 76% |
+| 0.95 | 2% | 58% |
+
+That is not cosmetic, for three reasons:
+
+1. **The number is interpretable.** 0.85 decision confidence means "at least 85%
+   of the probability mass is on one side of the line". 0.30 scalar confidence
+   means "probability is spread across levels", which is not what the lane asks
+   and cannot be explained to anyone in the room.
+2. **The Pen fills with the right comments.** Under the scalar gate a comment
+   spread across levels 0, 1 and 2 pens, and a human is asked to adjudicate a
+   decision the model was never unsure about. That is a waste of the scarcest
+   resource in the product.
+3. **PRD §6.1's threshold slider becomes meaningful.** Moving it visibly trades
+   Pen volume against agreement, and both numbers read in plain English.
+
+**Decision:** `CONFIDENCE_GATE = "decision"`, floor 0.85 — an operating point,
+not a discovery.
+
+### A clean negative result: the level boundary does not matter
+
+The second hypothesis in §12 was that thresholding the *mean* at 6.0 — between
+level 2 (5.0) and level 3 (7.5) — was exposed to the documented weakness that
+`jev-1.13` score levels are "weak in numerical calibration", and that
+`P(level >= 3) > 0.5` would be a better decision rule.
+
+It makes no difference. Of 300 comments the two rules disagree on **five**,
+3:2, with agreement 0.810 against 0.807. `SEVERITY_THRESHOLD` stays at 6.0.
+
+The documented weakness is real; it just does not bite at this threshold, on
+this rubric. Worth remembering before building anything else on a warning from
+the docs without measuring whether it applies.
+
+### What the demo looks like now
+
+Same thread, same sample, end to end:
+
+| | before | after |
+|---|---|---|
+| Approved | 15% | **79%** |
+| Bounced | 1% | 1% |
+| Pen | 84% | **20%** |
+
+Three visible lanes, a Pen at a plausible 20%, and penned comments that are
+genuinely hard to call — one of the four sampled is a string of morse code and
+emoticons with substance 0.0, which is exactly the kind of thing a human should
+decide on.
+
+**Bounced is still 1%, and that is now the largest remaining gap.** It is the
+known Hacker News weakness — `hostility` barely fires there — and it is what
+`TASKS.md` 1.1d (ChangeMyView) exists to fix. A demo whose red lane never
+lights up is only two-thirds of the story.

@@ -14,21 +14,20 @@ not done until someone has read the number.
 
 ## Where things stand
 
-The judge half works and is measured. There is no UI and no Reddit data.
+**The judge works end to end on real data.** On a 1,562-comment Hacker News
+thread: Approved 79%, Bounced 1%, Pen 20%, at ~$0.038 per 1,000 comments and
+p50 latency well inside budget. There is still no UI.
 
-Throughput, cost, latency and batch size are settled and comfortable — see
-`FINDINGS.md` §1 and §6. The risk profile has moved off the model integration
-entirely. What is unproven is **whether the Pen holds interesting comments on
-real data**, which is a content question, and everything in Phase 1 exists to
-answer it.
+Throughput, cost, latency and batch size were never the risk — see `FINDINGS.md`
+§1 and §6. Pen volume was, and three measured changes fixed it: per-axis rubric
+levels (§11), the `decisive` gate (§4), and gating on probability mass one side
+of the line rather than on scalar confidence (§13).
 
-Two open problems carried from the experiments:
+One open problem, and it is a content problem rather than an engineering one:
 
-- **Pen volume.** 73% on the smoke corpus, 78% on Jigsaw. The `decisive` gate
-  fixed the arithmetic; the level is still wrong and cannot be tuned honestly
-  until the curve is measured on data with thread context (`FINDINGS.md` §5).
-- **v2's `hostility` levels are worse than v1's** (−0.083 confidence, paired)
-  and nothing has been done about it (`FINDINGS.md` §3, "Open").
+- **Bounced is 1%.** Hacker News argues by condescension, not by abuse, so
+  `hostility` almost never fires. A demo whose red lane never lights up is
+  two-thirds of a demo. `1.1d` (ChangeMyView) is what fixes it.
 
 ---
 
@@ -94,11 +93,11 @@ building the thing that displays them.
   - [x] `contempt` → the one axis where confidence and accuracy disagreed. Took the 16:6 accuracy win over a marginal 0.028 confidence loss
   - [x] all variants scored **inside one request**, which gives perfect pairing and kills the arm-order confound in `FINDINGS.md` §7. Run every future rubric contest this way
   - **Outcome:** decisive confidence 0.538 → 0.599, auto-handled at floor 0.60 went 49% → 60%. But **16% at the current 0.85 floor, unchanged** — fixing `hostility` handed the bottleneck to `contempt`, whose three variants span only 0.034 and which looks close to its ceiling
-- [ ] **2.1b Gate on the decision, not on the level** — `FINDINGS.md` §12, now the highest-value task
-  - `ScoreAnswer.confidence` measures probability concentration across the five levels. The lane turns on which **side of the severity threshold** the score falls, which is a different question — a comment spread across levels 0/1/2 is uncertain about the level and certain about the decision, and currently pens for no reason
-  - `ScoreAnswer.probabilities` makes this directly computable: `p_over = sum(p for level, p in probabilities.items() if level >= OVER_AT)`
-  - still calibrated, still routes genuine uncertainty to a human, does not touch the floor — which §4 said the fix must not do
-  - *Done when:* measured against the current gate on the same thread, and `judge/lanes.py` holds whichever wins
+- [x] **2.1b Gate on the decision, not on the level** — `FINDINGS.md` §13
+  - [x] `Gate.DECISION` gates on probability mass one side of the line, on the axes that carried the verdict. **Demo went from 15/1/84 to 79/1/20.**
+  - [x] measured honestly: it is **not more discriminative**. At matched volume the two gates track within ±0.03 with no consistent direction, correlation 0.845. Adopted for semantics and scale, not accuracy
+  - [x] clean negative result on the second hypothesis: thresholding at a level boundary instead of the mean changes five comments out of 300. `SEVERITY_THRESHOLD` stays at 6.0
+  - the docs' "weak in numerical calibration" warning is real but does not bite here — measure before building on a warning
 - [x] **2.2 Measure confidence on data with real thread context** — `experiments/thread_probe.py`
   - the answer corrected `FINDINGS.md` §5 rather than confirming it: thread context did **not** rescue `on_topic`, it exposed a rubric ambiguity that Civil Comments had been hiding
   - `CONFIDENCE_FLOOR` deliberately **not** re-set yet — it should move after 2.1, not before, or we would be tuning the floor around a rubric we already know is fixable

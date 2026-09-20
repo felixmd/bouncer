@@ -39,7 +39,14 @@ Do not violate these without asking. Each one exists because breaking it kills t
 
 3. **Check the confidence gate first** in `lanes.py`. A low-confidence "clearly fine" still goes to the Pen. Short-circuiting this to reduce Pen volume guts the demo.
 
-   Refined by measurement: the gate applies the floor to the axes that **carried this comment's verdict** (`decisive`), not to `min()` of all four. `min()` of four axes pens 99% of traffic — that is arithmetic, not caution, and it left the demo with no Approved lane. Dropping the floor to compensate is the one move to avoid; the docs are explicit that it rebuilds the thing you were escaping.
+   Refined by measurement, twice:
+
+   - The floor applies to the axes that **carried this comment's verdict**, not to `min()` of all four. `min()` of four axes pens 99% of traffic — arithmetic, not caution.
+   - It applies to **probability mass on one side of the line** (`decision`), not to `ScoreAnswer.confidence`. The scalar is concentration across the five levels, which is a different question: a comment spread across levels 0/1/2 is unsure of the level and certain of the decision, and penning it wastes the scarcest resource in the product.
+
+   `decision` is **not more accurate** than the scalar gate — at matched auto-handled volume the two agree with human labels within ±0.03, correlation 0.845. Same curve. It is adopted because the number means the thing the lane turns on, so the floor reads in plain English. Do not report a volume change as an accuracy win.
+
+   Dropping the floor to reduce Pen volume remains the one move to avoid; the docs are explicit that it rebuilds the thing you were escaping.
 
 4. **Never ask Jev a question requiring a fact outside the state.** It is a non-generative decision model trained on synthetic data, not a knowledge store. No truth-checking, no fact-checking, no misinformation detection, no arithmetic, no dates, no counting. Compute those in Python and pass the result as prose.
 

@@ -42,6 +42,7 @@ class Lane(StrEnum):
 class Gate(StrEnum):
     MIN_ALL = "min_all"
     DECISIVE = "decisive"
+    DECISION = "decision"
 
 
 # config holds the plain string so it stays importable from anywhere without a
@@ -81,21 +82,70 @@ def decisive_confidence(
     return min(relevant)
 
 
+def _p_side(probabilities: Mapping[int, float], axis: str) -> float:
+    """Probability mass on the over-the-line side of this axis's threshold."""
+    if axis in ("hostility", "contempt"):
+        return sum(p for level, p in probabilities.items() if int(level) >= config.OVER_AT_LEVEL)
+    return sum(p for level, p in probabilities.items() if int(level) <= config.LOW_AT_LEVEL)
+
+
+def decision_confidence(
+    scores: Mapping[str, float],
+    probabilities: Mapping[str, Mapping[int, float]],
+) -> float:
+    """How sure the model is which *side of the line* this falls, on the axes
+    that carried the verdict.
+
+    `ScoreAnswer.confidence` answers a different question: how concentrated the
+    probability is across the five levels. A comment spread evenly over levels
+    0, 1 and 2 has low confidence and a completely certain decision, because
+    every one of those levels is far below the line. Under a scalar gate it
+    pens, and a human is asked to adjudicate something the model was never
+    unsure about.
+
+    Measured, this is **not** more discriminative than the scalar gate — at
+    matched auto-handled volume the two agree with human labels within ±0.03,
+    with no consistent direction, and their rankings correlate at 0.845. It is
+    the same curve. What it buys is that the number means the thing the lane
+    turns on, so a floor of 0.85 reads as "85% of the probability is on one side
+    of the line" rather than as an arbitrary setting that happened to leave 17%
+    of traffic auto-handled. See FINDINGS §13.
+    """
+    axes = ["hostility", "contempt"]
+    if _quality_rule_fires(scores):
+        axes += ["substance", "on_topic"]
+    values = []
+    for axis in axes:
+        p = _p_side(probabilities[axis], axis)
+        values.append(max(p, 1.0 - p))
+    return min(values)
+
+
 def confidence_for(
-    scores: Mapping[str, float], confidences: Mapping[str, float], gate: Gate
+    scores: Mapping[str, float],
+    confidences: Mapping[str, float],
+    gate: Gate,
+    probabilities: Mapping[str, Mapping[int, float]] | None = None,
 ) -> float:
     if gate is Gate.MIN_ALL:
         return min(confidences.values())
+    if gate is Gate.DECISION:
+        if probabilities is None:
+            raise ValueError("Gate.DECISION needs per-level probabilities")
+        return decision_confidence(scores, probabilities)
     return decisive_confidence(scores, confidences)
 
 
 def lane(
     scores: Mapping[str, float],
     confidences: Mapping[str, float],
+    probabilities: Mapping[str, Mapping[int, float]] | None = None,
     gate: Gate = DEFAULT_GATE,
     floor: float = config.CONFIDENCE_FLOOR,
 ) -> Lane:
     """Route one comment. Scores are on the normalised 0-10 scale."""
-    if not confidences or confidence_for(scores, confidences, gate) < floor:
+    if not confidences:
+        return Lane.PEN
+    if confidence_for(scores, confidences, gate, probabilities) < floor:
         return Lane.PEN
     return Lane.BOUNCED if _over_the_line(scores) else Lane.APPROVED

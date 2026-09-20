@@ -62,20 +62,41 @@ SEVERITY_THRESHOLD = 6.0  # on the normalised 0-10 scale
 LOW_SUBSTANCE_THRESHOLD = 3.0
 LOW_ON_TOPIC_THRESHOLD = 3.0
 
-# Which confidences the floor applies to. `min_all` — the original rule — takes
-# the worst of four axes and pens 99% of traffic; see judge/lanes.py for why
-# that is arithmetic rather than caution. Imported late to avoid a cycle.
-CONFIDENCE_GATE = "decisive"
-
-# From the curve in calibrate/sweep.py, not from taste. At decisive/0.85 the
-# auto-handled share agrees with the human label 94% of the time.
+# The rubric level at which an axis crosses the line, used by the decision gate.
+# Level 3 of 0..4 is the first rung the rubric describes as over the line — "a
+# direct personal attack", "not worth discussing". Levels 0 and 1 are the
+# "adds nothing" end of the quality axes.
 #
-# Provisional, and pessimistic. The curve was measured on Civil Comments, which
-# has no thread structure, so `on_topic` was being asked what a comment is
-# replying to with nothing in the state to reply to — one of the three causes
-# of low confidence the Score docs name. Its mean confidence there was 0.50
-# against 0.86 on the Reddit smoke corpus, where real thread context exists.
-# Re-run the sweep on a fetched thread before the demo and expect this to move.
+# Thresholding the *mean* at a level boundary instead of at 6.0 was tested and
+# made no difference: 3:2 on five discordant comments out of 300, agreement
+# 0.810 against 0.807. The docs' warning that score levels are "weak in
+# numerical calibration" is real but does not bite at this threshold, so
+# SEVERITY_THRESHOLD stays where it is and these constants are used only by the
+# gate. See FINDINGS §13.
+OVER_AT_LEVEL = 3
+LOW_AT_LEVEL = 1
+
+# Which confidences the floor applies to.
+#   min_all   the original rule. Takes the worst of four axes and pens 99% of
+#             traffic — arithmetic rather than caution.
+#   decisive  scalar confidence, on the axes that carried the verdict.
+#   decision  probability mass on one side of the line, on the same axes.
+#
+# `decision` is not more discriminative than `decisive` — at matched volume the
+# two agree with human labels within ±0.03 either way. It is adopted because it
+# measures the quantity the lane actually turns on, which makes the floor mean
+# something a person can read.
+CONFIDENCE_GATE = "decision"
+
+# Under `decision`, 0.85 means "at least 85% of the probability mass is on one
+# side of the line". On the Hacker News thread that auto-handles 83% and pens
+# 17%; on labelled Civil Comments the auto-handled share agrees with the human
+# label 0.876 of the time.
+#
+# This is an operating point, not a discovery — the same trade was always
+# available from the scalar gate at a floor near 0.30. PRD §6.1 is the reason it
+# is exposed as a slider with the auto-handled share live beside it rather than
+# baked in as a claim.
 CONFIDENCE_FLOOR = 0.85
 
 # --- Replay and render -----------------------------------------------------

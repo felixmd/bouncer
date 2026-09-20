@@ -28,7 +28,7 @@ from pathlib import Path
 
 import config
 from judge.client import JudgeClient
-from judge.lanes import Lane, decisive_confidence, lane
+from judge.lanes import Lane, decision_confidence, decisive_confidence, lane
 from judge.rubric import DEFAULT_RUBRIC, normalise
 
 OUT_DIR = Path(__file__).parent / "out"
@@ -62,13 +62,14 @@ async def judge_batch(client: JudgeClient, thread: dict, batch: list[dict]) -> l
 
     out = []
     for comment in batch:
-        scores, confidences = {}, {}
+        scores, confidences, probabilities = {}, {}, {}
         for axis in DEFAULT_RUBRIC.keys:
             answer = response.scores.get(f"{comment['id']}_{axis}")
             if answer is None:
                 break
             scores[axis] = normalise(answer.score)
             confidences[axis] = answer.confidence
+            probabilities[axis] = dict(answer.probabilities)
         if len(scores) < len(DEFAULT_RUBRIC.keys):
             out.append({**comment, "lane": Lane.PEN.value, "error": "missing answers"})
             continue
@@ -76,8 +77,11 @@ async def judge_batch(client: JudgeClient, thread: dict, batch: list[dict]) -> l
             **comment,
             "scores": scores,
             "confidences": confidences,
+            "probabilities": {a: {str(k): v for k, v in p.items()}
+                              for a, p in probabilities.items()},
             "decisive": decisive_confidence(scores, confidences),
-            "lane": lane(scores, confidences).value,
+            "decision": decision_confidence(scores, probabilities),
+            "lane": lane(scores, confidences, probabilities).value,
             "latency_ms": latency_ms,
             "error": None,
         })
@@ -122,9 +126,11 @@ async def main(args: argparse.Namespace) -> None:
         print(f"  {axis:<11} mean {mean:.3f}  median {statistics.median(values):.3f}"
               f"   vs jigsaw {jigsaw[axis]:.3f}  ({delta:+.3f})")
 
-    dec = [r["decisive"] for r in ok]
-    print(f"\n  decisive confidence  mean {statistics.mean(dec):.3f}  "
-          f"median {statistics.median(dec):.3f}")
+    for name in ("decisive", "decision"):
+        values = [r[name] for r in ok]
+        print(f"\n  {name:<9} confidence  mean {statistics.mean(values):.3f}  "
+              f"median {statistics.median(values):.3f}")
+    dec = [r[config.CONFIDENCE_GATE] for r in ok]
 
     print("\n  floor    auto-handled")
     for floor in (0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95):
@@ -142,7 +148,7 @@ async def main(args: argparse.Namespace) -> None:
     print(f"\n{'=' * 96}\nPENNED — read these and try to call them (TASKS.md 2.3)\n{'=' * 96}")
     for r in random.sample(penned, min(args.pen, len(penned))):
         worst = min(DEFAULT_RUBRIC.keys, key=lambda a: r["confidences"][a])
-        print(f"\n[{r['id']}] decisive {r['decisive']:.2f}, least sure on {worst} "
+        print(f"\n[{r['id']}] decision {r['decision']:.2f}, least sure on {worst} "
               f"({r['confidences'][worst]:.2f})")
         print("  scores  " + "  ".join(
             f"{a[:4]} {r['scores'][a]:.1f}" for a in DEFAULT_RUBRIC.keys))
