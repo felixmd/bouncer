@@ -65,10 +65,19 @@ calibration curve down.
   - [x] 19 keyless tests over the tree walk, hashing and URL forms
   - [ ] **BLOCKED:** Reddit 403s unauthenticated `.json` from this network — IP-level, not User-Agent. Spec §5.1's "OAuth is over-engineering" is now false and has been corrected. App-only OAuth is implemented and the token endpoint is reachable (401 not 403 with dummy credentials), so this needs a *script* app at `reddit.com/prefs/apps` and `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` in `.env`
   - *Done when:* one thread on disk, schema matches §5.2, no real handle anywhere in the file
-- [ ] **1.2 Fetch 3–5 threads and eyeball the pile**
-  - r/AmItheAsshole, r/unpopularopinion, r/relationship_advice, r/politics, r/news
-  - PRD §7's first risk is that the wall goes all green; this is the check
-  - *Done when:* at least one thread has a visible spread of hostile / contemptuous / vacuous / ambiguous, judged by reading it
+- [x] **1.1b `feed/hn_fetch.py`** — Hacker News, no credentials, unblocked Phase 1
+  - Algolia mirror returns a whole nested thread in one request
+  - earns its place rather than just being available: PRD §3's audience is "technical-adjacent", and condescension is HN's native register, which exercises `contempt` — the axis the PRD calls the interesting one
+  - weakness: `hostility` fires rarely, so the Bounced lane is thin (1–2% on the probe)
+- [x] **1.1c `feed/store.py`** — anonymisation and schema shaping shared by all fetchers, so a new source cannot forget invariant 8
+- [ ] **1.1d `feed/convokit_fetch.py`** — ChangeMyView and Wikipedia Talk, with topic-keyword filtering
+  - real Reddit, threaded, curated for escalation into personal attacks — the material HN does not have
+  - corpus downloads openly, no credentials; the CMV zip is 51 MB
+  - filter out race / gender-identity / abortion threads at fetch time, per the decision on 2026-09-20
+  - *Done when:* a CMV thread is on disk and its Bounced lane is not empty
+- [x] **1.2 Fetch threads and eyeball the pile** — three HN threads, 6,590 comments
+  - `hn-47340079` (HN's own AI-comment moderation policy — 1,562), `hn-24872911` (YouTube-dl DMCA — 1,392), `hn-41002195` (CrowdStrike — 3,636)
+  - spread is real on `contempt` and `substance`; **thin on `hostility`**, which is the known HN weakness and the reason 1.1d still matters
 - [ ] **1.3 Commit one small thread as a test fixture**
   - tests must run with no network and no key — 20–30 comments is enough
   - *Done when:* `uv run pytest` exercises the real replay path from a committed file
@@ -78,13 +87,13 @@ calibration curve down.
 Cheap, and each one changes a number that the UI will display. Do these before
 building the thing that displays them.
 
-- [ ] **2.1 Per-axis rubric** — the explicit open item in `FINDINGS.md` §3
-  - v1's `hostility` levels beat v2's by 0.083 confidence; v2's `on_topic` beats
-    v1's by 0.165. Nothing tests the obvious combination.
-  - *Done when:* a paired run over the same corpus says which per-axis mix wins, per axis, and `judge/rubric.py` holds that mix
-- [ ] **2.2 Re-run `calibrate/sweep.py` against a fetched Reddit thread**
-  - the curve is currently measuring Civil Comments' missing fields
-  - *Done when:* `CONFIDENCE_FLOOR` is set from a curve built on data that has thread context, and the old value is recorded as superseded
+- [~] **2.1 Per-axis rubric — now the highest-value task in the project.** `FINDINGS.md` §3 and §10
+  - [x] `on_topic` rewritten to a single referent: 0.354 → 0.450 on a real thread. It had two competing referents in one question, which only surfaced once real parent context existed
+  - [ ] **`hostility` and `contempt` are what pen comments now.** Both sit at ~0.67 on real data, and `decisive` takes the minimum of the two on every comment, giving 0.538 and a 84% Pen. v1's `hostility` levels beat v2's by 0.083 and that combination is still untested
+  - *Done when:* a paired run says which per-axis mix wins on each axis, and `judge/rubric.py` holds that mix
+- [x] **2.2 Measure confidence on data with real thread context** — `experiments/thread_probe.py`
+  - the answer corrected `FINDINGS.md` §5 rather than confirming it: thread context did **not** rescue `on_topic`, it exposed a rubric ambiguity that Civil Comments had been hiding
+  - `CONFIDENCE_FLOOR` deliberately **not** re-set yet — it should move after 2.1, not before, or we would be tuning the floor around a rubric we already know is fixable
 - [ ] **2.3 Pen-quality audit** — PRD success criterion 4
   - read 30 penned comments cold and try to call them. If they are obvious, the
     threshold is wrong; if they are genuinely hard, the demo works.

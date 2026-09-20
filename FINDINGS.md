@@ -237,3 +237,71 @@ Paired per-comment tests were available the whole time, because all four arms
 scored the same corpus in the same order. **Compare arms pairwise, not by their
 aggregate rates.** Rates this close are one or two comments wide, and the
 direction of a rate says nothing about whether the arms actually disagree.
+
+## 9. §5 was wrong: thread context did not rescue `on_topic`
+
+Measured 2026-09-20 on a real Hacker News thread (1,562 comments, max depth 14),
+via `experiments/thread_probe.py`.
+
+§5 above predicted that `on_topic` confidence would recover once the data had
+thread structure, on the basis that Civil Comments starved it of a referent.
+**It went the other way.** With a thread title in the state and a real parent
+snippet in the question:
+
+| | Civil Comments (no thread) | Hacker News (real thread) |
+|---|---|---|
+| `on_topic` mean confidence | 0.500 | **0.354** |
+
+Several comments came back at confidence **0.00** while still producing a
+plausible score. The axis was not starved — it was *confused*.
+
+The cause is in the rubric, not the data. The levels said "the thread's
+subject" and "the specific question or claim the thread is about", while the
+question supplied a *parent comment* to judge against. Two competing referents
+in one question — the documented "measuring more than one thing" failure. On
+Civil Comments there was no parent, so the ambiguity never surfaced; adding the
+context exposed it. **Adding context to an ambiguous question made it worse.**
+
+Rewriting every level to name one referent — the quoted text it is replying to,
+with the thread title standing in for top-level comments — recovered most of it:
+
+| `on_topic` mean confidence | |
+|---|---|
+| levels naming the thread, parent supplied | 0.354 |
+| levels naming the quoted text | **0.450** |
+
+Still the weakest axis by a distance, and still below the 0.86 seen on the
+hand-written smoke corpus — where the threads are five comments deep, not
+fourteen. Depth is the untested variable.
+
+**The general lesson is the one worth keeping:** a confidence number that looks
+like a data problem can be a wording problem, and the two are distinguishable
+only by changing one and re-measuring. §5's diagnosis was reasonable and wrong.
+
+## 10. The Pen problem is now `hostility` and `contempt`
+
+Same run. With `decisive` gating the quality axes only enter the gate when the
+low-quality rule fires, so `on_topic` is no longer what pens most comments:
+
+| axis | mean confidence on a real thread |
+|---|---|
+| `substance` | 0.720 |
+| `hostility` | 0.675 |
+| `contempt` | 0.666 |
+| `on_topic` | 0.450 |
+
+`decisive` takes the minimum of `hostility` and `contempt` on every comment that
+is not caught by the quality rule. Two axes at ~0.67 give a decisive confidence
+of **0.538**, and at the 0.85 floor that leaves **16% auto-handled, 84% penned**.
+
+So the remaining Pen volume traces directly to the two severity axes, and
+`FINDINGS.md` §3 already flagged that v2's `hostility` levels are *worse* than
+v1's by 0.083 and that nothing had been done about it. That open item is now the
+highest-value work in the project — it is the only thing standing between the
+current state and a demo with three visible lanes.
+
+Note also what did **not** move: `hostility` −0.027 and `contempt` +0.000
+against Civil Comments. These two axes are intrinsic to the comment's own text,
+they get no thread context by design, and they behave identically across two
+very different corpora. That is a good sign for the rubric being stable; it just
+needs to be *sharper*.
