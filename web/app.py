@@ -16,6 +16,7 @@ import uvicorn
 from fasthtml.common import (
     H1,
     H2,
+    A,
     B,
     Button,
     Details,
@@ -26,6 +27,7 @@ from fasthtml.common import (
     Input,
     Label,
     Option,
+    Pre,
     Script,
     Select,
     Span,
@@ -41,6 +43,9 @@ from feed.replay import ThreadStore
 from judge.lanes import Gate, Lane, Policy
 from judge.pipeline import Pipeline
 from judge.rubric import Rubric
+from web.calibration import GATE_BLURB, chart
+from web.calibration import load as load_curve
+from web.calibration import table as curve_table
 from web.limits import RateLimiter
 from web.render import rejudge_report, render_loop, resort_frame, test_result
 
@@ -208,6 +213,58 @@ h1 span { color:var(--dim); font-weight:400; }
   border:1px solid var(--edge); border-radius:3px; padding:.05rem .3rem;
   font-variant-numeric:tabular-nums; }
 .verdict-why { font-size:.72rem; color:var(--dim); }
+
+/* --- calibration screen. PRD 4.3: the difference between "we have an amber
+   lane" and "here is the curve". Scrolls, unlike the wall. */
+body.page { overflow:auto; }
+.tab-link { color:#388bfd; font-size:.72rem; text-decoration:none;
+  align-self:center; }
+.tab-link:hover { text-decoration:underline; }
+.back { color:#388bfd; font-size:.75rem; text-decoration:none; }
+.back:hover { text-decoration:underline; }
+.calibration { padding:1rem 1.4rem 2.5rem; max-width:64rem; }
+.calibration h2 { margin:.2rem 0 .4rem; font-size:1rem; font-weight:600; }
+.caveat { color:var(--dim); font-size:.76rem; max-width:52rem;
+  margin-bottom:.9rem; }
+.gate-tabs { display:flex; gap:.4rem; margin-bottom:.5rem; }
+.gate-tab { font-size:.72rem; padding:.22rem .6rem; border-radius:4px;
+  border:1px solid var(--edge); color:var(--dim); text-decoration:none;
+  background:#12151c; }
+.gate-tab.on { color:var(--ink); border-color:#388bfd; background:#111a28; }
+.gate-blurb { color:var(--dim); font-size:.74rem; margin-bottom:.8rem; }
+/* Legend always present for two series; identity is never colour alone. */
+.legend { display:flex; gap:1.1rem; margin-bottom:.2rem; }
+.key { font-size:.72rem; color:var(--dim); display:flex; align-items:center;
+  gap:.35rem; }
+.key::before { content:""; width:12px; height:2px; border-radius:1px; }
+.key-auto::before { background:#388bfd; }
+.key-agree::before { background:#db6d28; }
+.curve { width:100%; height:auto; display:block; background:var(--panel);
+  border:1px solid var(--edge); border-radius:6px; }
+.curve .tick { fill:var(--dim); font-size:11px; font-variant-numeric:tabular-nums; }
+.curve .axis-title { fill:var(--dim); font-size:11px;
+  text-transform:uppercase; letter-spacing:.09em; }
+.curve .endlabel { fill:var(--ink); font-size:11px; }
+.curve .shipped { fill:var(--pen); font-size:10px;
+  text-transform:uppercase; letter-spacing:.08em; }
+.curve .tip { fill:var(--ink); font-size:11px; }
+.curve .tip.auto { fill:#388bfd; }
+.curve .tip.agree { fill:#db6d28; }
+/* Hover reveals a crosshair and readout. Every value is also in the table
+   below, so the tooltip enhances rather than gates. */
+.curve .col-chrome { opacity:0; pointer-events:none; }
+.curve .col:hover .col-chrome { opacity:1; }
+.table-drawer { border:1px solid var(--edge); border-radius:6px;
+  margin-top:.9rem; background:#12151c; }
+.curve-table { border-collapse:collapse; font-size:.74rem; margin:.2rem 1.2rem 1rem;
+  font-variant-numeric:tabular-nums; }
+.curve-table th { text-align:right; color:var(--dim); font-weight:600;
+  padding:.2rem .7rem; border-bottom:1px solid var(--edge); font-size:.66rem;
+  text-transform:uppercase; letter-spacing:.07em; }
+.curve-table td { text-align:right; padding:.16rem .7rem; color:var(--ink); }
+.empty { padding:1.5rem; color:var(--dim); font-size:.8rem; }
+.empty pre { color:var(--ink); background:#0d1016; border:1px solid var(--edge);
+  border-radius:4px; padding:.5rem .7rem; display:inline-block; margin-top:.5rem; }
 
 /* Invariant 9: blurred by default, click to reveal. Real moderation tools do
    this, so it reads as authentic rather than squeamish. */
@@ -469,6 +526,18 @@ def controls(pipeline: Pipeline) -> Div:
     )
 
 
+def page_shell(*content) -> tuple:
+    """Chrome for the secondary screens. The wall has its own layout."""
+    return (
+        Title("The Bouncer — calibration"),
+        Header(
+            H1("The Bouncer ", Span("· calibration")),
+            Div(A("← back to the wall", href="/", cls="back"), cls="stats"),
+        ),
+        *content,
+    )
+
+
 def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
     """Returned as a tuple, not a full `Html`.
 
@@ -490,6 +559,7 @@ def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
                 # failed request pens fifteen comments, and a Pen padded with
                 # failures looks identical to one full of hard cases.
                 stat("errors", "errors", cls="err"),
+                A("calibration →", href="/calibration", cls="tab-link"),
                 cls="stats",
             ),
         ),
@@ -581,6 +651,67 @@ def build():
     @rt("/")
     def home():
         return page(store, pipeline)
+
+    @rt("/calibration")
+    def calibration(gate: str = config.CONFIDENCE_GATE):
+        """PRD §4.3's second screen. The difference between "we have an amber
+        lane" and "here is the curve".
+
+        Entirely offline — it reads a recorded sweep from `calibrate/curve.json`
+        and calls nothing. Keeping it that way is deliberate: the accuracy
+        objection gets answered from evidence already gathered, not from a live
+        run whose numbers would move while someone was looking at them.
+        """
+        curve = load_curve()
+        if curve is None:
+            return page_shell(
+                Div(
+                    "No curve recorded yet. Run:",
+                    Pre("uv run python -m calibrate.sweep --write"),
+                    cls="empty",
+                )
+            )
+        if gate not in curve["gates"]:
+            gate = config.CONFIDENCE_GATE
+
+        return page_shell(
+            Div(
+                H2("Calibration"),
+                Div(
+                    f"{curve['n']} labelled Civil Comments. Agreement is against the "
+                    f"human toxicity label, which is overwhelmingly insult and abuse "
+                    f"— a fair test of hostility and contempt, and no test at all of "
+                    f"substance or on_topic, which need thread context this corpus "
+                    f"does not have.",
+                    cls="caveat",
+                ),
+                # One filter row above the chart, scoping everything below it.
+                Div(
+                    *(
+                        A(
+                            name,
+                            href=f"/calibration?gate={name}",
+                            cls="gate-tab" + (" on" if name == gate else ""),
+                        )
+                        for name in curve["gates"]
+                    ),
+                    cls="gate-tabs",
+                ),
+                Div(GATE_BLURB.get(gate, ""), cls="gate-blurb"),
+                Div(
+                    Span("auto-handled", cls="key key-auto"),
+                    Span("agreement on those", cls="key key-agree"),
+                    cls="legend",
+                ),
+                chart(curve, gate),
+                Details(
+                    Summary("table view"),
+                    curve_table(curve, gate),
+                    cls="drawer table-drawer",
+                ),
+                cls="calibration",
+            )
+        )
 
     @rt("/rubric")
     async def rubric(axis: str, question: str, level0: str = "", level1: str = "",

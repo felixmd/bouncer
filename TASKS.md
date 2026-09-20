@@ -14,6 +14,12 @@ not done until someone has read the number.
 
 ## Where things stand
 
+**Everything in the PRD is built.** The wall, all three interaction hooks, the
+tunables, and the calibration curve. What remains is demo readiness (Phase 8),
+the offline replay mode (4b.2), and one judgement call nobody has made yet
+(2.3 — reading the Pen cold to confirm it is genuinely hard).
+
+
 **The demo runs end to end.** 7,456 pre-baked comments on disk streaming through
 the judge at **225 items/sec sustained** — 82% Approved, 4% Bounced, 14% Pen,
 $0.036 per 1,000 comments, p50 285 ms — onto a live three-lane wall over one
@@ -216,9 +222,13 @@ auto-handled share.
 
 ## Phase 7 — calibration tab
 
-- [ ] **7.1** Render the floor × gate curve from `calibrate/sweep.py` output
-  - promoted from "cut first" — it is nearly free now and it is the direct answer
-    to the accuracy objection in PRD §2
+- [x] **7.1 The curve** — `/calibration`, `FINDINGS.md` §24
+  - **agreement rises monotonically 0.807 → 0.950 as the floor rises 0.50 → 0.99**, while auto-handled falls 100% → 47%. The lines cross, and the crossing point is the trade. That is PRD §2's answer to the accuracy objection, on a chart
+  - entirely offline: renders `calibrate/curve.json` and calls nothing. The objection gets answered from evidence already gathered, not a live run whose numbers move while someone watches
+  - `calibrate/sweep.py --write` regenerates it; the JSON is committed so the tab works on a fresh clone with no key
+  - gate selector (min2 / mean2 / decision), the shipped operating point marked on the chart, hover crosshair, and a table-view twin so no value is reachable only by hover
+  - the caveat is **printed above the chart**: agreement is against a label that is mostly insult and abuse, so it tests `hostility` and `contempt` and not `substance` or `on_topic`
+  - colours chosen by running the validator, not by eye. The first pair looked clearly distinct and scored ΔE 2.7 under deuteranopia
 
 ## Phase 8 — demo readiness
 

@@ -18,6 +18,7 @@ uv run --env-file .env python -m web.app                # run the demo (localhos
 uv run python -m feed.reddit_fetch URL                  # dev-time: fetch a thread
 uv run python -m calibrate.fetch_jigsaw --n 300         # dev-time: labelled sample
 uv run python -m calibrate.sweep                        # threshold + gate curve (offline)
+uv run python -m calibrate.sweep --write                # refresh calibrate/curve.json
 uv run pytest                                           # tests
 uv run ruff check --fix .                               # lint
 

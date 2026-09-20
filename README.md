@@ -60,16 +60,26 @@ Reddit, and the tests run against recorded fixtures by design.
 
 ## Status
 
-The judge half works and is measured. No UI yet.
+Working end to end. 7,456 pre-baked comments streaming through the judge onto a
+three-lane wall, all three PRD §4.2 interaction hooks, and the calibration
+curve.
 
-- `judge/` — client with token bucket, the four-axis rubric, the lane policy
-- `calibrate/` — labelled-sample fetch and the threshold/gate curve
-- `experiments/` — the three runs behind `FINDINGS.md`
+| | |
+|---|---|
+| throughput | 225 items/sec sustained (target was 200) |
+| lanes | ~79% Approved, ~3% Bounced, ~19% Pen |
+| latency | p50 285 ms |
+| cost | $0.034 per 1,000 comments — **and $0.41 per minute of streaming** |
+| calibration | agreement 0.807 → 0.950 as the floor rises; monotonic |
 
-Headline results: batching costs nothing up to B=30 (so 300 items/sec is
-comfortable), latency p50 is 169 ms, cost is ~$0.038 per 1,000 comments, and
-the confidence signal is genuinely calibrated — agreement rises monotonically
-with it. The open problem is Pen volume, and the next step is Phase 1 of
-`TASKS.md`: get a real Reddit thread on disk, because the calibration curve is
-currently being measured on a dataset with no thread context and `on_topic` is
-paying for it.
+**Read `FINDINGS.md`.** It is the deliverable as much as the app is, and it
+records what measurement changed: the batch-size knee does not exist (§1), the
+rubric mattered more than the model (§11), the gate was measuring the wrong
+quantity (§13), the throughput story in the spec was wrong in three places
+(§16), and cost per minute is the number that actually governs running this
+(§19).
+
+Two things a reader should know up front: `contempt` has a confidence floor
+near 0.66 that three separate rewrites could not move, and a thin Bounced lane
+is a property of real discussion data rather than a bug — both are written up
+rather than tuned away.

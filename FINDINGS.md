@@ -998,3 +998,54 @@ an improvement."
 This is the most useful thing the demo does, and it only works because the
 report is honest. A version that claimed improvement would be wrong roughly
 half the time in front of the room.
+
+## 24. The calibration curve, and the claim it actually supports
+
+PRD §4.3's second screen, and the direct answer to the accuracy objection in
+§2. Entirely offline — it renders a recorded sweep from `calibrate/curve.json`
+and calls nothing, which is deliberate: the objection gets answered from
+evidence already gathered, not from a live run whose numbers would move while
+someone was looking at them.
+
+The `decision` gate, 300 labelled Civil Comments:
+
+| floor | auto-handled | agreement on those |
+|---|---|---|
+| 0.50 | 100% | 0.807 |
+| 0.65 | 89% | 0.850 |
+| 0.75 | 80% | 0.866 |
+| **0.85** *(shipped)* | **70%** | **0.876** |
+| 0.95 | 57% | 0.924 |
+| 0.99 | 47% | 0.950 |
+
+**Agreement rises monotonically with the floor across the entire range**, from
+0.807 to 0.950, while the auto-handled share falls from 100% to 47%. The two
+lines cross, and the crossing point is the trade. That is the whole claim:
+*the model's confidence predicts its accuracy*, so a threshold buys agreement
+with volume in a way you can read off a chart and choose.
+
+PRD §2 wanted this to turn "we have a nice amber lane" into "here is the
+curve". It does.
+
+### What the curve does not cover, stated on the screen
+
+Agreement is against Civil Comments' human `toxicity` label, which is
+overwhelmingly insult and abuse. That makes it a fair test of `hostility` and
+`contempt` and **no test at all** of `substance` or `on_topic`, which need
+thread context the labelled corpus does not have (§5, §9). The recorded sweep
+therefore covers the two intrinsic axes only, and the caveat is printed above
+the chart rather than buried here.
+
+### One process note worth keeping
+
+The chart's two colours were chosen by running the validator, not by eye. The
+first pair — blue `#58a6ff` and purple `#bc8cff` — looked clearly distinct on
+screen and scored a colourblind separation of **ΔE 2.7** under deuteranopia,
+which is indistinguishable. They also failed the normal-vision floor at 13.2.
+The shipped pair, `#388bfd` and `#db6d28`, scores 29.3 and 33.5.
+
+Two colours that look fine and are not is exactly the kind of thing that
+survives a review, so: run the check. The lane colours (green, red, amber) are
+deliberately not reused for series here — they mean Approved, Bounced and Pen
+everywhere else in the app, and overloading them would cost more than a fresh
+hue does.
