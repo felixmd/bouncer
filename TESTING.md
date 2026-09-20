@@ -10,15 +10,39 @@ cover most of the app.** Only tier 3 spends money, and it says how much.
 
 ## First: make sure nothing is already running
 
-This bites. `preview_stop`, closing a terminal, and Ctrl-C in some shells all
-leave the `uv run` child alive — and a live orphan keeps judging at full rate.
-Eight of them is what drained the credits twice during the build.
+This bites. Closing a terminal, stopping a run from an editor, and Ctrl-C in
+some shells all leave the `uv run` child alive — and a live orphan keeps judging
+at full rate. Eight of them is what drained the credits twice during the build.
+
+The app only ever listens on 5001 (or `PORT`), so the port is the reliable way
+to find one:
 
 ```bash
-powershell "Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force"
+lsof -i :5001                     # macOS / Linux — anything still listening?
+pkill -f "python -m web.app"      # stop it
+```
+
+```powershell
+# Windows PowerShell
+Get-NetTCPConnection -LocalPort 5001 -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 ```
 
 Expect no output. Run it again after any check that starts a server.
+
+> **If Windows says "Access is denied", that is not a Python problem.** A server
+> started *through an IDE or a coding agent* is owned by that tool's sandbox,
+> and your ordinary user token cannot terminate it — `Stop-Process`, `taskkill
+> /F` and Task Manager all refuse identically. Three ways out, cheapest first:
+>
+> 1. Re-run the kill from an **elevated** PowerShell (Run as administrator).
+> 2. Task Manager → Details → *End process tree* on the parent `uv.exe`, itself
+>    run as administrator.
+> 3. Leave it. The processes die on logoff, and an orphan only spends while a
+>    browser is attached to it — check `sockets` in `/health` (below) to be
+>    sure. `judged` frozen across two checks a minute apart is the proof.
+>
+> Servers you started yourself, in your own terminal, kill normally.
 
 ---
 

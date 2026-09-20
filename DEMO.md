@@ -52,17 +52,26 @@ guessing between them is slow.
 where every card reads "could not judge" is not a demo of anything; the app
 degrades correctly but there is nothing to show.
 
-**4. Kill orphans.** `preview_stop` and closing a terminal do not always kill
-the `uv run` child, and an orphaned live server keeps judging at full rate for
-nobody. This is what drained the credits both times.
+**4. Kill orphans.** Closing a terminal or stopping a run from an editor does
+not always kill the `uv run` child, and an orphaned live server keeps judging at
+full rate for nobody. This is what drained the credits both times.
 
 ```bash
+lsof -i :5001 && pkill -f "python -m web.app"      # macOS / Linux
+```
+
+```powershell
 # Windows
-powershell "Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force"
+Get-NetTCPConnection -LocalPort 5001 -State Listen -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 ```
 
 The app only judges while a browser is connected, so an orphan is now harmless —
-but check anyway.
+but check anyway, and clear it before the room arrives rather than during.
+
+If Windows answers **Access is denied**, the server belongs to an IDE or agent
+sandbox and needs an elevated PowerShell; `TESTING.md` has the fallbacks. Do
+that the night before, not five minutes out.
 
 ## Exposing it to a room
 

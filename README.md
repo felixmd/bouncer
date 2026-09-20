@@ -228,9 +228,18 @@ browser is attached.
 > not always kill the `uv run` child, and a stray one keeps judging at full
 > rate for nobody. Eight of them is what burned the credits.
 >
-> ```powershell
-> Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force
+> ```bash
+> lsof -i :5001 && pkill -f "python -m web.app"      # macOS / Linux
 > ```
+>
+> ```powershell
+> Get-NetTCPConnection -LocalPort 5001 -State Listen -ErrorAction SilentlyContinue |
+>   ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }   # Windows
+> ```
+>
+> If Windows answers **Access is denied**, the server was launched by an IDE or
+> coding agent that owns the process and your own shell cannot end it — use an
+> elevated PowerShell. [`TESTING.md`](TESTING.md) has the longer version.
 
 ### Everything else
 
