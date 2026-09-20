@@ -7,12 +7,12 @@ decision model — scores each one on four axes in flight, and they land in one
 of three lanes: **Approved**, **Bounced**, or **the Pen**, where a human
 decides.
 
-![The wall](docs/img/wall.png)
+![The wall, live](docs/img/hero.png)
 
-*Real Hacker News and r/changemyview comments at 60/s. Green is approved, red
-is bounced and blurred, amber is the Pen. Every score on screen came from the
-model — the spend counter reads $0.0000 because this is the offline replay,
-which is the same wall for nothing.*
+*A live run: 9,177 real Hacker News and r/changemyview comments judged at 41/s,
+**34 cents**, zero errors. Green is approved, red is bounced and blurred, amber
+is the Pen. The counters are the argument — volume in five figures, spend in
+cents, and 1,351 comments routed to a person because the model was not sure.*
 
 ---
 
@@ -78,6 +78,12 @@ The caveat is printed above the chart in the app, too: the human label here is
 overwhelmingly insult and abuse, so this tests `hostility` and `contempt` and
 says nothing about `substance` or `on_topic`, which need thread context this
 corpus does not have.
+
+That missing context is also why the screenshot at the top reads **93%**
+auto-handled at the same 0.85 floor this table scores at 70%. `on_topic`
+confidence is 0.50 when there is nothing to be on-topic about, and 0.86 on a
+real thread with a parent to score against. The curve is measured where the
+labels are, which happens to be the pessimistic place to measure it.
 
 ---
 
@@ -179,31 +185,49 @@ Requires [uv](https://docs.astral.sh/uv/). Python 3.12 is pinned in
 uv sync
 ```
 
-### No key, no spend — start here
+There are two ways to start it. **Both serve the same UI at the same address**
+— same lanes, same cards, same controls. The only difference is where the
+verdicts come from, and whether you are paying for them.
 
-```bash
-uv run python -m web.app --offline
-```
-
-Open <http://127.0.0.1:5001>. This replays 350 recorded verdicts. Every score on
-screen is a real answer the model gave, captured earlier — and the lane policy,
-the confidence gate, the threshold sliders and Allow/Bounce are all the genuine
-article, because they are a pure recompute over stored probabilities. Only two
-features need a live model, and they refuse rather than return stale numbers.
-
-**[`TESTING.md`](TESTING.md) is a hand-testing guide** — three tiers, eight
-numbered exercises on the offline wall, each stating what to expect and what it
-proves. Nothing there needs to be left streaming.
-
-### Live
+### Live — the real thing
 
 ```bash
 cp .env.example .env     # then fill in TYPESAFE_API_KEY
 uv run --env-file .env python -m web.app
 ```
 
+Open <http://127.0.0.1:5001>. All 7,456 comments, judged as they arrive, plus
+the two features that need a model: **test your own comment** and **live rubric
+editing**. This is the mode in the screenshot at the top, and the one that costs
+money — read the next section before leaving it up.
+
 `.env` is gitignored. The SDK reads `TYPESAFE_API_KEY` from the environment
 itself — it is never passed in code, never inlined, never committed.
+
+### Offline — the same wall, for nothing
+
+```bash
+uv run python -m web.app --offline
+```
+
+![The same wall, offline](docs/img/wall.png)
+
+*Same UI, same address, $0.0000. The blue banner is the only thing added; the
+tester and the rubric drawer are the only things missing.*
+
+This replays 350 recorded verdicts. Every score on screen is a real answer the
+model gave, captured earlier — and the lane policy, the confidence gate, the
+threshold sliders and Allow/Bounce are all the genuine article, because they are
+a pure recompute over stored probabilities. The two live-only features refuse
+rather than return stale numbers.
+
+Reach for this for anything that is not specifically exercising the live path:
+checking a layout change, rehearsing the threshold demo, running the tests.
+Paying to re-derive verdicts you already have is how the credits went.
+
+**[`TESTING.md`](TESTING.md) is a hand-testing guide** — three tiers, eight
+numbered exercises on the offline wall, each stating what to expect and what it
+proves. Nothing there needs to be left streaming.
 
 ### Read this before leaving it running
 
@@ -384,7 +408,7 @@ counting, by design.
 | corpus | 7,456 pre-baked comments, 4 threads |
 | throughput | **225 items/sec** sustained (target was 200) |
 | latency | p50 285 ms, p95 1,291 ms |
-| lanes | ~73% Approved · ~4% Bounced · ~23% Pen — moves with the corpus |
+| lanes | ~73% Approved · ~4% Bounced · ~23% Pen on the shipped recording. Bounced holds at 3–4%; the Pen runs 15–27% depending on which thread is streaming |
 | cost | $0.034 per 1,000 comments — **and $0.41 per minute of streaming** |
 | calibration | agreement 0.807 → 0.950 as the floor rises; monotonic |
 | re-judge | 776 comments re-scored in 3.2 s for $0.032 |
