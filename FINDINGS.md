@@ -656,3 +656,63 @@ Two consequences:
 `quoted` addressing costs ~45% more tokens than index addressing (§2), so it is
 also buying its confidence win partly out of this budget. At current volumes
 that is affordable and clearly worth it.
+
+## 17. The wall, and what building it cost
+
+The UI works. Three lanes streaming over one WebSocket at a fixed 12Hz tick,
+cards carrying the four-bar fingerprint, Bounced blurred until clicked, the Pen
+heavier and labelled with the axis that was unsure. Verified in a browser:
+eviction holds the Pen at exactly 150 cards under a live stream (invariant 7),
+and clicking a Bounced card unblurs that card alone (invariant 9).
+
+Nothing here changed the product thinking, but three of the four bugs cost real
+time and none of them surfaced as an error — the page simply stayed blank.
+Worth recording so the next person recognises the shape.
+
+- **`setup_ws` is broken in `python-fasthtml` 0.14.13.** Its connect handler
+  does `conns[scope.client]`, but `scope` resolves to the raw ASGI dict, which
+  has no `.client`. Every connection raised `AttributeError`. Also note it is
+  applied with `@patch`, so the module-level `setup_ws` name is `None` and only
+  `app.setup_ws()` exists. We keep our own socket registry instead, which is
+  about ten lines and is what a single broadcast loop wants anyway.
+- **`str()` on an FT object does not render HTML.** It yields the children
+  joined, so a frame went out as the literal text `lane-approvedlane-pentick`.
+  The htmx ws extension found no elements carrying `hx-swap-oob` and silently
+  did nothing. Use `to_xml`.
+- **Returning a full `Html(...)` bypasses FastHTML's page assembly**, so `hdrs`
+  — stylesheet, htmx, the ws extension — never reach the head. Return a tuple
+  and put body attributes in `bodykw`.
+- CSS: grid items default to `min-width:auto`, so one long comment stretched
+  its column and squeezed the other two.
+
+There is now a `/health` route returning pipeline counters, queue depths and
+the last error. It exists because "the wall is blank" has at least four causes
+and guessing between them is slow.
+
+## 18. The account ran out of credits
+
+Mid-way through verifying the UI, every request started returning:
+
+```
+402 Your organization has no available TypeSafe API credits.
+```
+
+Two things worth taking from it.
+
+**The failure mode held exactly as designed.** 4,050 unjudgeable comments went
+to the Pen, each labelled "could not judge", the app stayed up and responsive,
+and the error counter tracked them separately from genuine Pen volume — which
+is precisely the distinction §16 argued for. Spec §3.4's "degrade into a human
+looks at it" is not just a nice idea; it is why a total API outage produced a
+working page rather than a stack trace.
+
+**But a demo cannot run on it.** A wall where every card reads "could not
+judge" is not a demo of anything. If the account is going to be near its limit
+at showtime, the honest mitigation is the same one used for Reddit: a recorded
+run replayed from disk. `experiments/out/probe-*.json` already contains real
+verdicts, and the render path was verified against exactly that data while the
+API was dead. That is a small piece of work and it is now the difference
+between a demo and a blank room.
+
+Total spend across every experiment in this document: well under a dollar. The
+credits did not run out because this project is expensive.

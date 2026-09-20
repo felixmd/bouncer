@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bouncer",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--env-file", ".env", "python", "-m", "web.app"],
+      "port": 5001,
+      "autoPort": true
+    }
+  ]
+}

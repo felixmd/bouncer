@@ -14,10 +14,14 @@ not done until someone has read the number.
 
 ## Where things stand
 
-**The pipeline runs.** 7,456 pre-baked comments on disk, streaming through the
-judge at **225 items/sec sustained** — 82% Approved, 4% Bounced, 14% Pen, 3
-errors in 30 seconds, $0.036 per 1,000 comments, p50 latency 285 ms. That clears
-the PRD's 200/sec target. There is still no UI: Phase 4 is next.
+**The demo runs end to end.** 7,456 pre-baked comments on disk streaming through
+the judge at **225 items/sec sustained** — 82% Approved, 4% Bounced, 14% Pen,
+$0.036 per 1,000 comments, p50 285 ms — onto a live three-lane wall over one
+WebSocket at a fixed 12Hz tick.
+
+**Blocked: the TypeSafe account is out of credits** (`402`). The app degrades
+correctly — every comment routes to the Pen labelled "could not judge" and the
+page stays up — but a wall of "could not judge" is not a demo. See Phase 4b.
 
 This is a capability measurement, so the overturned assumptions are part of the
 output. `FINDINGS.md` now records that the batch-size knee does not exist (§1),
@@ -149,16 +153,24 @@ building the thing that displays them.
 
 ## Phase 4 — the web shell
 
-- [ ] **4.1** FastHTML app, routes, static shell
-- [ ] **4.2 WebSocket + fixed 12Hz render loop** — invariant 1
-  - workers write to `out_queue`; a *separate* loop drains and emits one batched frame
-  - *Done when:* one frame per tick under load, verified by counting frames, not by it looking fine
-- [ ] **4.3** Three lanes, card component, four-bar fingerprint
-- [ ] **4.4 DOM cap at ~150 cards with tail eviction** — invariant 7
-  - *Done when:* the page is still responsive after ten minutes of streaming
-- [ ] **4.5 Bounced lane blurred by default, click to reveal** — invariant 9
-- [ ] **4.6** Counters: push raw numbers once per tick, JS odometer interpolates — spec §8.3
-- [ ] **4.7** Spend meter from real `usage.input_tokens`, not an estimate
+- [x] **4.1** FastHTML app, routes, shell — plus `/health` (counters, queue depths, last error), because "the wall is blank" has four causes and guessing is slow
+- [x] **4.2 WebSocket + fixed 12Hz render loop** — invariant 1
+  - one broadcast loop for all clients: the pipeline has a single `out_queue`, so a loop per connection would hand each client a disjoint half of the stream
+  - FastHTML's `setup_ws` is broken in 0.14.13 (`scope.client` on a dict); we keep our own registry — `FINDINGS.md` §17
+- [x] **4.3** Three lanes, card component, four-bar fingerprint
+- [x] **4.4 DOM cap with tail eviction** — invariant 7. Verified in-browser: the Pen holds at exactly 150 under a live stream
+- [x] **4.5 Bounced blurred, click to reveal** — invariant 9. Verified: the clicked card unblurs, the rest stay blurred
+- [x] **4.6** Counters as data attributes once per tick, eased by a JS odometer at frame rate — spec §8.3
+- [x] **4.7** Spend meter from real `usage.input_tokens`
+- **Card sampling:** Approved and Bounced show at most `CARDS_PER_FRAME` per tick (the counters carry the true totals). **The Pen is never sampled** — a penned card nobody can click is not a penned card
+
+## Phase 4b — blocked on credits
+
+- [ ] **4b.1 Top up the TypeSafe account.** Every request now returns `402 no available credits`. Nothing downstream can be measured or demoed until this is resolved
+- [ ] **4b.2 Offline replay mode** — replay recorded verdicts from `experiments/out/probe-*.json` instead of calling the API
+  - the same mitigation invariant 5 already applies to Reddit, applied to the model
+  - it is what let the render layer be verified while the API was dead, so most of the work is proven
+  - *Done when:* `uv run python -m web.app --offline` produces a full wall with no key and no credits
 
 ## Phase 5 — the Pen
 

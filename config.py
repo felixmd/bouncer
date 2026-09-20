@@ -130,6 +130,16 @@ CONFIDENCE_FLOOR = 0.85
 DRIP_RATE_PER_SECOND = 200  # UI slider
 RENDER_TICK_HZ = 12  # fixed tick; never one WS frame per classification
 MAX_VISIBLE_CARDS = 150  # hard DOM cap, evict from the tail
+
+# Cards *shown* per lane per frame. At 225 items/sec and 12Hz a frame carries
+# ~19 verdicts, which against a 150-card cap means the browser inserting and
+# evicting 225 nodes a second. The counters carry the truth; the wall is a
+# visual, and a wall moving at 96 cards/sec already reads as a torrent.
+#
+# The Pen is exempt and always shows every card. Sampling Approved is a
+# rendering choice; sampling the Pen would mean a comment nobody can click,
+# and the Pen is the product.
+CARDS_PER_FRAME = 8
 REJUDGE_WINDOW = 800  # backlog re-scored on a rubric edit (§6)
 
 # A partial batch is flushed after this long rather than waiting for B comments.

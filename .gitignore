@@ -21,3 +21,9 @@ Thumbs.db
 .idea/
 .vscode/
 data/raw/
+
+# FastHTML session signing key — a secret, regenerated on first run
+.sesskey
+
+# Local Claude Code settings; launch.json is shared, the rest is per-machine
+.claude/settings.local.json
