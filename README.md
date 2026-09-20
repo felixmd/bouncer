@@ -418,6 +418,7 @@ counting, by design.
 
 | | |
 |---|---|
+| [`RESEARCH.md`](RESEARCH.md) | **The capability report.** What Jev can and cannot do here, cost, and how it compares to the alternatives |
 | [`TESTING.md`](TESTING.md) | **Hand-testing guide.** Discrete checks; most need no key |
 | [`DEMO.md`](DEMO.md) | **The runbook.** Read before showing it to anyone |
 | [`FINDINGS.md`](FINDINGS.md) | **What measurement changed.** Supersedes parts of the two below |
