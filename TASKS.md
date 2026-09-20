@@ -128,10 +128,9 @@ building the thing that displays them.
 - [x] **2.2 Measure confidence on data with real thread context** — `experiments/thread_probe.py`
   - the answer corrected `FINDINGS.md` §5 rather than confirming it: thread context did **not** rescue `on_topic`, it exposed a rubric ambiguity that Civil Comments had been hiding
   - `CONFIDENCE_FLOOR` deliberately **not** re-set yet — it should move after 2.1, not before, or we would be tuning the floor around a rubric we already know is fixable
-- [ ] **2.3 Pen-quality audit** — PRD success criterion 4
-  - read 30 penned comments cold and try to call them. If they are obvious, the
-    threshold is wrong; if they are genuinely hard, the demo works.
-  - this is the criterion that cannot be automated, and it is the one that matters
+- [ ] **2.3 Pen-quality audit** — PRD success criterion 4, and **the last thing measurement cannot settle**
+  - read 30 penned comments cold and try to call them. If they are obvious, the threshold is wrong; if they are genuinely hard, the demo works
+  - now free and repeatable: `uv run python -m web.app --offline` needs no key and no credits
   - *Done when:* someone has actually read them and written down the hesitation rate
 - [ ] **2.4 Characterise the 6–7% lane wobble** — `FINDINGS.md` §7
   - which comments flip under batching, and are they the near-threshold ones?
@@ -173,10 +172,12 @@ building the thing that displays them.
 ## Phase 4b — blocked on credits
 
 - [ ] **4b.1 Top up the TypeSafe account.** Every request now returns `402 no available credits`. Nothing downstream can be measured or demoed until this is resolved
-- [ ] **4b.2 Offline replay mode** — replay recorded verdicts from `experiments/out/probe-*.json` instead of calling the API
-  - the same mitigation invariant 5 already applies to Reddit, applied to the model
-  - it is what let the render layer be verified while the API was dead, so most of the work is proven
-  - *Done when:* `uv run python -m web.app --offline` produces a full wall with no key and no credits
+- [x] **4b.2 Offline replay** — `uv run python -m web.app --offline`. `FINDINGS.md` §25
+  - **6,492 judged, 0 errors, $0.0000, no key in the environment** — the offline launch config does not even pass `--env-file`
+  - fakes at the *client boundary*, so the batcher, rubric, lane policy, gate and render loop are the real ones. Threshold and gate controls still work offline (a pure recompute over stored probabilities — 29% auto-handled at floor 0.99, 96% at 0.55), and so does Allow/Bounce
+  - **every score on screen is a real verdict.** 350 of them, baked from `thread_probe` by `feed/bake.py` and committed. Reusing answers for unscored comments would have given full coverage and was rejected — a fabricated fingerprint in front of a room is a lie, and the cost is only that offline mode streams the 350 it has
+  - rubric editing and test-your-own-comment ask the model something new, so they refuse and name the flag to drop rather than return stale numbers
+  - the bug worth remembering: question keys are `{comment_id}_{axis}` and `on_topic` contains an underscore, so splitting on the last one matched nothing and every comment errored
 
 ## Phase 5 — the Pen
 

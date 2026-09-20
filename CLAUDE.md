@@ -15,6 +15,8 @@ See `PRD.md` for product logic, `TECHNICAL_SPEC.md` for architecture, and **`FIN
 ```bash
 uv sync                                                 # install
 uv run --env-file .env python -m web.app                # run the demo (localhost:5001)
+uv run python -m web.app --offline                      # replay recordings: no key, no spend
+uv run python -m feed.bake                              # dev-time: refresh the offline recording
 uv run python -m feed.reddit_fetch URL                  # dev-time: fetch a thread
 uv run python -m calibrate.fetch_jigsaw --n 300         # dev-time: labelled sample
 uv run python -m calibrate.sweep                        # threshold + gate curve (offline)
@@ -90,6 +92,7 @@ $0.034 per 1,000 comments — and **$0.41 per minute** of streaming at 205/s, wh
 
 The unit price is not the problem: 93% of every request is overhead, because each of the four Score questions carries its own copy of the rubric *and* of the comment. At 205/s that is ~121K tokens/sec against a 250K ceiling — roughly half the maximum this API can bill.
 
+- **Use `--offline` for anything that is not specifically testing the live path.** It replays recorded verdicts: no key, no spend, no network, and the lane policy, gate and threshold controls are the real ones because they are a pure recompute. Only a rubric edit or a typed comment genuinely needs the model, and both refuse in offline mode rather than return stale numbers.
 - **Never leave the app running unattended.** `preview_stop` does not kill the `uv run` child; check for orphaned `python` processes after restarting. Eight of them judging for nobody is what burned the credits.
 - **The pipeline only judges while a browser is connected** (`Replay.demand`). Keep it that way.
 - **The drip rate is the cost dial**, and it is already in the UI. 20/s still reads as a stream and costs a tenth as much.

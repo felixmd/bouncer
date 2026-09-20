@@ -37,15 +37,22 @@ sends it as a bearer token; `uv run --env-file .env` is what gets it there.
 ## Commands
 
 ```bash
-uv run --env-file .env python -m web.app          # run the demo (localhost:5001)
-uv run --env-file .env python -m calibrate.sweep  # threshold sweep against Jigsaw
-uv run python -m feed.reddit_fetch URL            # dev-time: fetch a thread to data/threads/
-uv run pytest                                     # tests (no network, no key)
-uv run ruff check --fix .                         # lint
+uv run --env-file .env python -m web.app     # the demo, live (localhost:5001)
+uv run python -m web.app --offline           # the demo, from recordings — no key, no spend
+uv run python -m calibrate.sweep             # the calibration curve (offline)
+uv run python -m feed.hn_fetch --search      # dev-time: find and fetch a thread
+uv run pytest                                # tests (no network, no key)
+uv run ruff check --fix .                    # lint
 ```
 
-Only the two commands that call Jev need the key. The fetch script talks to
-Reddit, and the tests run against recorded fixtures by design.
+**`--offline` is the one to reach for.** It replays 350 recorded verdicts, so
+there is no key, no spend and no network, and the lane policy, the gate and the
+threshold controls are the real ones — they are a pure recompute over stored
+probabilities. Only a rubric edit or a typed comment needs the model, and both
+say so rather than return stale numbers.
+
+Live mode costs **$0.41 a minute** at full drip rate. Read `FINDINGS.md` §19
+before leaving it running.
 
 ## Layout
 

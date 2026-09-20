@@ -1049,3 +1049,54 @@ survives a review, so: run the check. The lane colours (green, red, amber) are
 deliberately not reused for series here — they mean Approved, Bounced and Pen
 everywhere else in the app, and overloading them would cost more than a fresh
 hue does.
+
+## 25. Offline replay: the same wall, for nothing
+
+```
+uv run python -m web.app --offline
+```
+
+6,492 comments judged, **0 errors, $0.0000, no key in the environment.** The
+launch config for offline mode does not even pass `--env-file`.
+
+This is the mitigation invariant 5 already applies to Reddit — pre-bake it and
+the upstream cannot take the demo down — applied to the model. §18 is why it
+exists: the credits ran out twice mid-build, and a wall where every card reads
+"could not judge" demonstrates nothing. §19 is why it is the *right default*
+for an ambient display: $0.41 a minute live, nothing from a recording.
+
+### It fakes at the client boundary, not the pipeline
+
+`OfflineClient` returns the same shape `system_one` does, so the batcher, the
+rubric, the lane policy, the gate and the render loop are all the real ones.
+Two consequences worth having:
+
+- **Threshold and gate controls still work offline**, because retuning is a
+  pure recompute over stored probabilities (§21). Verified: 29% auto-handled at
+  floor 0.99, 96% at 0.55, with no model calls. So the most interesting control
+  in the demo is free to demonstrate.
+- **Allow / Bounce still works**, since it never needed the model.
+
+### Every score on screen is real
+
+The recording is 350 actual verdicts from `experiments/thread_probe.py`, baked
+by `feed/bake.py` and committed. Nothing is synthesised or interpolated, and the
+cost of that choice is coverage: only sampled comments have verdicts, so offline
+mode streams those 350 and no others. A wall capped at 150 cards does not
+notice.
+
+The alternative — reusing recorded answers for unscored comments, keyed by hash
+— would have given full coverage and a plausible-looking wall. It was rejected.
+A fabricated fingerprint on screen is a lie told to an audience, and the whole
+claim of this project is that it reports what it measured.
+
+For the same reason, the two features that need a *new* answer refuse instead of
+returning stale numbers: a rubric edit asks the model a question it has never
+been asked, and so does a typed comment. Both say so and name the flag to drop.
+A banner across the top says what is being replayed.
+
+### What this unblocks
+
+`TASKS.md` 2.3 — reading 30 penned comments cold to decide whether they are
+genuinely hard — is PRD success criterion 4 and the one thing measurement cannot
+settle. It now costs nothing to do, repeatedly, by anyone, with no key.

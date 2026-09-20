@@ -8,6 +8,7 @@ CSS at high card counts, is a single `<canvas>` fed by this same socket rather
 than a frontend rewrite.
 """
 
+import argparse
 import asyncio
 import os
 from dataclasses import replace
@@ -41,6 +42,7 @@ from fasthtml.common import (
 import config
 from feed.replay import ThreadStore
 from judge.lanes import Gate, Lane, Policy
+from judge.offline import BANNER, OfflineClient, restrict
 from judge.pipeline import Pipeline
 from judge.rubric import Rubric
 from web.calibration import GATE_BLURB, chart
@@ -139,6 +141,9 @@ h1 span { color:var(--dim); font-weight:400; }
 .bar-fill { height:100%; }
 .bar-hostility { background:#f85149; } .bar-contempt { background:#db6d28; }
 .bar-substance { background:#3fb950; } .bar-on_topic { background:#58a6ff; }
+
+.offline-banner { padding:.4rem 1.2rem; background:#1a1f2e; color:#8fb8f0;
+  font-size:.72rem; border-bottom:1px solid #26304a; }
 
 /* Rubric editor. A native <details> drawer so the wall keeps its height and
    the panel needs no JS. */
@@ -538,7 +543,7 @@ def page_shell(*content) -> tuple:
     )
 
 
-def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
+def page(store: ThreadStore, pipeline: Pipeline, offline: bool = False) -> tuple:
     """Returned as a tuple, not a full `Html`.
 
     Returning `Html(...)` would bypass FastHTML's page assembly and the `hdrs`
@@ -564,11 +569,13 @@ def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
             ),
         ),
         Form(controls(pipeline), id="tuner"),
-        rubric_editor(pipeline),
+        Div(BANNER, cls="offline-banner") if offline else None,
+        rubric_editor(pipeline) if not offline else None,
         Div(
             lane("lane-approved", "Approved"),
             lane("lane-bounced", "Bounced", "click to reveal"),
-            lane("lane-pen", "The Pen", "a human decides", foot=tester()),
+            lane("lane-pen", "The Pen", "a human decides",
+                 foot=None if offline else tester()),
             cls="lanes",
         ),
         # Replaced out-of-band every tick; the odometer reads its dataset.
@@ -576,10 +583,21 @@ def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
     )
 
 
-def build():
+def build(offline: bool = False):
     store = ThreadStore.load()
     pipeline = Pipeline(store)
     limiter = RateLimiter()
+
+    if offline:
+        # Swap the client, then drop every comment we have no recorded verdict
+        # for — offline mode shows real model output or nothing.
+        pipeline.client = OfflineClient()
+        kept = restrict(store, pipeline.client.comment_ids)
+        if not kept:
+            raise SystemExit(
+                "the recording does not match any thread on disk — re-run "
+                "uv run python -m feed.bake"
+            )
     tasks: dict[str, asyncio.Task] = {}
 
     async def on_startup() -> None:
@@ -650,7 +668,7 @@ def build():
 
     @rt("/")
     def home():
-        return page(store, pipeline)
+        return page(store, pipeline, offline)
 
     @rt("/calibration")
     def calibration(gate: str = config.CONFIDENCE_GATE):
@@ -727,6 +745,12 @@ def build():
         improve".
         """
         levels = [level0, level1, level2, level3, level4]
+        if offline:
+            return Div(
+                "Offline: a rubric edit asks the model a new question, and "
+                "there is nothing to ask. Restart without --offline.",
+                id="rubric-report", cls="rubric-report",
+            )
         levels = [line.strip() for line in levels if line.strip()]
         if len(levels) < 2 or not question.strip():
             return Div(
@@ -753,6 +777,13 @@ def build():
         The only route a stranger can reach, so it is the only one with a rate
         limit — spec §9.
         """
+        if offline:
+            return Div(
+                Div("offline", cls="verdict-lane pen"),
+                Div("Judging a new comment needs the model. Restart without "
+                    "--offline.", cls="verdict-why"),
+                id="test-result", cls="test-result",
+            )
         if not comment.strip():
             return Div(id="test-result", cls="test-result")
 
@@ -827,6 +858,16 @@ def build():
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="The Bouncer.")
+    parser.add_argument(
+        "--offline", action="store_true",
+        help="replay recorded verdicts: no key, no credits, no network",
+    )
+    args = parser.parse_args()
+
+    if args.offline:
+        print("  offline — replaying recorded verdicts, no model calls")
+
     # Built here rather than at import time. `build()` constructs a
     # `JudgeClient`, which needs TYPESAFE_API_KEY, and tests that import this
     # module for its markup must run without one.
@@ -834,7 +875,7 @@ if __name__ == "__main__":
     # 5001 is the documented demo port; PORT overrides it so a stray process
     # holding 5001 does not block a run.
     uvicorn.run(
-        build(),
+        build(offline=args.offline),
         host="127.0.0.1",
         port=int(os.environ.get("PORT", 5001)),
         log_level="warning",
