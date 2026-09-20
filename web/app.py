@@ -16,6 +16,7 @@ from fasthtml.common import (
     H1,
     H2,
     B,
+    Button,
     Div,
     Form,
     Header,
@@ -27,6 +28,7 @@ from fasthtml.common import (
     Select,
     Span,
     Style,
+    Textarea,
     Title,
     fast_app,
 )
@@ -35,7 +37,8 @@ import config
 from feed.replay import ThreadStore
 from judge.lanes import Gate, Lane, Policy
 from judge.pipeline import Pipeline
-from web.render import render_loop, resort_frame
+from web.limits import RateLimiter
+from web.render import render_loop, resort_frame, test_result
 
 CSS = """
 :root {
@@ -128,6 +131,38 @@ h1 span { color:var(--dim); font-weight:400; }
 .bar-hostility { background:#f85149; } .bar-contempt { background:#db6d28; }
 .bar-substance { background:#3fb950; } .bar-on_topic { background:#58a6ff; }
 
+/* Test your own comment: PRD 4.2's shareable artifact, at the foot of the Pen
+   column because that is where a viewer is already looking. */
+.tester { border-top:1px solid var(--edge); padding:.6rem .7rem; background:#12151c;
+  display:flex; flex-direction:column; gap:.45rem; flex:0 0 auto; }
+.test-fields { display:flex; flex-direction:column; gap:.35rem; }
+.tester textarea, .tester input[type=text] { font:inherit; font-size:.8rem;
+  background:#0d1016; color:var(--ink); border:1px solid var(--edge);
+  border-radius:4px; padding:.4rem .5rem; resize:none; width:100%; }
+.tester input[type=text] { font-size:.72rem; }
+.tester textarea::placeholder, .tester input::placeholder { color:#5b6274; }
+.test-actions { display:flex; align-items:center; gap:.6rem; }
+.tester .judge { cursor:pointer; font:inherit; font-size:.74rem; font-weight:600;
+  letter-spacing:.04em; padding:.32rem .8rem; border-radius:4px;
+  background:var(--pen); color:#1a1408; border:0; }
+.tester .judge:hover { filter:brightness(1.1); }
+.test-note { color:var(--dim); font-size:.68rem; opacity:0; transition:opacity .15s; }
+.test-note.htmx-request { opacity:1; }
+.test-note.htmx-request::after { content:"judging…"; }
+.test-result:empty { display:none; }
+.test-result { border:1px solid var(--edge); border-radius:5px; padding:.5rem .6rem;
+  background:var(--panel); display:flex; flex-direction:column; gap:.4rem; }
+.verdict-lane { font-size:.8rem; font-weight:700; text-transform:uppercase;
+  letter-spacing:.1em; }
+.verdict-lane.approved { color:var(--approved); }
+.verdict-lane.bounced  { color:var(--bounced); }
+.verdict-lane.pen      { color:var(--pen); }
+.axis-chips { display:flex; flex-wrap:wrap; gap:.3rem; }
+.axis-chip { font-size:.66rem; color:var(--dim); background:#0d1016;
+  border:1px solid var(--edge); border-radius:3px; padding:.05rem .3rem;
+  font-variant-numeric:tabular-nums; }
+.verdict-why { font-size:.72rem; color:var(--dim); }
+
 /* Invariant 9: blurred by default, click to reveal. Real moderation tools do
    this, so it reads as authentic rather than squeamish. */
 .card.blurred .body { filter:blur(5px); cursor:pointer; user-select:none;
@@ -203,9 +238,52 @@ def stat(key: str, label: str, cls: str = "") -> Div:
     return Div(B("0", id=f"n-{key}"), I(label), cls=f"stat {cls}".strip())
 
 
-def lane(lane_id: str, title: str, note: str = "") -> Div:
+def lane(lane_id: str, title: str, note: str = "", foot=None) -> Div:
     heading = H2(title, I(f" · {note}") if note else "")
-    return Div(heading, Div(id=lane_id, cls="stack"), cls="lane")
+    parts = [heading, Div(id=lane_id, cls="stack")]
+    if foot is not None:
+        parts.append(foot)
+    return Div(*parts, cls="lane")
+
+
+def tester() -> Form:
+    """Type a comment, get the same fingerprint card.
+
+    PRD §4.2's shareable artifact. It lives at the foot of the Pen column
+    because that is where a viewer is already looking, and because what they
+    want to know after reading the Pen is "what would it say about mine".
+
+    The context field is not decoration. `on_topic` is scored against whatever
+    the comment is replying to, and a typed comment has no parent — scoring it
+    against nothing is a documented cause of low confidence (FINDINGS §9), so
+    leaving this blank would pen most test comments for a reason that has
+    nothing to do with what was typed.
+    """
+    return Form(
+        Div(
+            Textarea(
+                placeholder="Try your own comment…",
+                name="comment", id="test-comment", rows="2",
+            ),
+            Input(
+                type="text", name="context", id="test-context",
+                placeholder="replying to… (optional — gives on_topic something to judge against)",
+            ),
+            cls="test-fields",
+        ),
+        Div(
+            Button("Judge it", type="submit", cls="judge"),
+            Span(id="test-note", cls="test-note"),
+            cls="test-actions",
+        ),
+        Div(id="test-result", cls="test-result"),
+        hx_post="/test",
+        hx_target="#test-result",
+        hx_swap="outerHTML",
+        hx_indicator="#test-note",
+        id="tester",
+        cls="tester",
+    )
 
 
 def controls(pipeline: Pipeline) -> Div:
@@ -306,7 +384,7 @@ def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
         Div(
             lane("lane-approved", "Approved"),
             lane("lane-bounced", "Bounced", "click to reveal"),
-            lane("lane-pen", "The Pen", "a human decides"),
+            lane("lane-pen", "The Pen", "a human decides", foot=tester()),
             cls="lanes",
         ),
         # Replaced out-of-band every tick; the odometer reads its dataset.
@@ -317,6 +395,7 @@ def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
 def build():
     store = ThreadStore.load()
     pipeline = Pipeline(store)
+    limiter = RateLimiter()
     tasks: dict[str, asyncio.Task] = {}
 
     async def on_startup() -> None:
@@ -388,6 +467,27 @@ def build():
     @rt("/")
     def home():
         return page(store, pipeline)
+
+    @rt("/test")
+    async def test(request, comment: str = "", context: str = ""):
+        """Judge a comment someone typed. One request, the same gate.
+
+        The only route a stranger can reach, so it is the only one with a rate
+        limit — spec §9.
+        """
+        if not comment.strip():
+            return Div(id="test-result", cls="test-result")
+
+        client = request.client.host if request.client else "unknown"
+        if refusal := limiter.check(client):
+            return Div(
+                Div("held", cls="verdict-lane pen"),
+                Div(refusal, cls="verdict-why"),
+                id="test-result", cls="test-result",
+            )
+
+        verdict = await pipeline.judge_one(comment[:1500], context[:400])
+        return test_result(verdict)
 
     @rt("/tune")
     def tune(rate: float, floor: float, severity: float, gate: str):

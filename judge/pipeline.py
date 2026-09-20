@@ -194,6 +194,45 @@ class Pipeline:
             )
         return verdicts
 
+    async def judge_one(self, text: str, context: str = "") -> Verdict:
+        """Judge an ad-hoc comment — the same gate, the same rubric, one request.
+
+        Not added to the backlog or to any lane: it belongs to no thread, and
+        putting it in the stream would misrepresent the thread's lane mix.
+
+        `context` is what `on_topic` is scored against. A typed comment has no
+        parent, and scoring `on_topic` against nothing is a documented cause of
+        low confidence (FINDINGS §9) — it would pen the comment for a reason
+        that has nothing to do with what was typed.
+        """
+        referent = context.strip() or config.TEST_DEFAULT_CONTEXT
+        comment = Comment(
+            id="test", thread_id="test", body=text.strip(),
+            parent_snippet=referent, author_hash="you", depth=0, score=0,
+        )
+        questions = self.rubric.questions_for(comment.id, comment.body, referent)
+        response, _, error = await self.client.ask({"thread_title": referent}, questions)
+        if response is None:
+            return Verdict(comment=comment, lane=Lane.PEN, error=error)
+
+        scores, confidences, probabilities = {}, {}, {}
+        for axis in self.rubric.keys:
+            answer = response.scores.get(f"{comment.id}_{axis}")
+            if answer is None:
+                return Verdict(comment=comment, lane=Lane.PEN, error="missing answers")
+            scores[axis] = normalise(answer.score)
+            confidences[axis] = answer.confidence
+            probabilities[axis] = dict(answer.probabilities)
+
+        return Verdict(
+            comment=comment,
+            lane=lane(scores, confidences, probabilities, policy=self.policy),
+            scores=scores,
+            confidences=confidences,
+            probabilities=probabilities,
+            gate_confidence=decision_confidence(scores, probabilities, self.policy),
+        )
+
     def retune(self, policy: Policy) -> list[Verdict]:
         """Apply a new policy and re-sort the backlog. **No model calls.**
 

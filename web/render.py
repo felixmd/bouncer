@@ -209,6 +209,48 @@ def build_frame(
     return "".join(to_xml(part) for part in parts)
 
 
+def test_result(verdict: Verdict) -> Div:
+    """The same fingerprint card, plus what the lane decision turned on.
+
+    PRD §4.2 calls this the shareable artifact — people screenshot their own
+    comment getting bounced — so it says *why*, not just which colour.
+    """
+    if verdict.error:
+        return Div(
+            Div("could not judge", cls="verdict-lane pen"),
+            Div(verdict.error[:160], cls="verdict-why"),
+            id="test-result", cls="test-result",
+        )
+
+    axis = verdict.least_sure_axis
+    if verdict.lane is Lane.PEN:
+        why = (
+            f"the model is {verdict.gate_confidence:.0%} sure which side of the "
+            f"line this falls, below the {config.CONFIDENCE_FLOOR:.0%} floor — "
+            f"least sure on {axis}"
+        )
+    else:
+        why = (
+            f"{verdict.gate_confidence:.0%} sure which side of the line — "
+            f"above the {config.CONFIDENCE_FLOOR:.0%} floor"
+        )
+
+    return Div(
+        Div(verdict.lane.value, cls=f"verdict-lane {verdict.lane.value}"),
+        fingerprint(verdict),
+        Div(
+            *(
+                Span(f"{a} {verdict.scores[a]:.1f}", cls="axis-chip")
+                for a in DEFAULT_RUBRIC.keys
+            ),
+            cls="axis-chips",
+        ),
+        Div(why, cls="verdict-why"),
+        id="test-result",
+        cls="test-result",
+    )
+
+
 def resort_frame(pipeline: Pipeline, verdicts: list[Verdict]) -> str:
     """Replace the lanes wholesale after a policy change.
 

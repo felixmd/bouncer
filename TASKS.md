@@ -193,8 +193,10 @@ API's maximum possible token rate.
 
 ## Phase 6 — the three interaction hooks
 
-- [ ] **6.1 Test your own comment** — same gate, same fingerprint card
-  - per-IP rate limit and a hard total cap before this is ever exposed — spec §9
+- [x] **6.1 Test your own comment** — same gate, same rubric, one request, the same fingerprint. `FINDINGS.md` §22
+  - [x] per-IP sliding window plus a hard total cap for the process run — spec §9. A held request does not consume the total budget, or a retry loop would exhaust the cap without anyone getting an answer
+  - [x] an optional "replying to…" field, which is **not decoration**: `on_topic` scored against nothing is a documented cause of low confidence (§9), so without it every test comment would pen for a reason unrelated to what was typed
+  - **Worth being ready to explain:** a textbook contempt comment scores `contempt` 9.2/10 and still pens, because the gate is only 79% sure and `contempt` is the axis §11 found has a floor around 0.66. The weakest axis is the one a viewer is most likely to probe on purpose
 - [ ] **6.2 Live rubric editing** — edit levels, re-judge the backlog, re-sort
   - budget is under 3s; cap the re-judged window at ~800 if needed — spec §6
   - **be honest about what this shows.** The v1→v2 rewrite took careful work and

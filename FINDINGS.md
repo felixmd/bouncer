@@ -879,3 +879,57 @@ Worth keeping the distinction clear, because it is easy to conflate:
 - **Rubric *wording* — expensive.** It changes the question, so the backlog has
   to be re-judged (spec §6). That is the one in `TASKS.md` 6.2, and it is the
   one that costs money.
+
+## 22. Test-your-own-comment, and the axis that shows up in it
+
+PRD §4.2's shareable artifact works — one comment, one request, the same gate,
+the same fingerprint. Four cases, run live:
+
+| typed | lane | fingerprint (h/c/s/o) | gate |
+|---|---|---|---|
+| "You are a complete moron and everyone here knows it." | **bounced** | 7.5 / 9.5 / 1.1 / 0.2 | 95% |
+| "I think the second point is wrong, because the study only sampled undergraduates." *(with context)* | **approved** | 0.0 / 2.4 / 6.4 / 6.7 | 100% |
+| "lol" | **pen** | 0.1 / 0.0 / 0.0 / 0.9 | 82% |
+| "Anyone who still believes this is beyond help. Not worth explaining again." | **pen** | 4.8 / **9.2** / 0.8 / 5.0 | 79% |
+
+The first two are the demo working exactly as advertised, and the first is the
+screenshot people will take.
+
+**The fourth is the finding.** That is a textbook contempt comment — "not worth
+explaining again" is almost the rubric's level-4 wording — and the model scores
+`contempt` at **9.2 out of 10**. It still goes to the Pen, because the gate is
+only 79% sure which side of the line it falls, and `contempt` is the axis §11
+found has a confidence floor around 0.66 that three separate rewrites could not
+move.
+
+So the weakest axis in the rubric is the one a viewer is most likely to probe
+deliberately, and on the clearest possible example it produces a *high score
+with low confidence* — which routes to a human. That is the mechanism behaving
+correctly and the demo reading slightly oddly at the same time, and it is worth
+being ready to say so out loud rather than reloading until it bounces.
+
+"lol" landing in the Pen at 82% is the better story: substance 0.0 and on_topic
+0.9 fire the low-quality rule, but the model is genuinely unsure whether a
+two-letter reaction is noise or harmless, which is exactly the judgement a human
+should make.
+
+### The context field is not decoration
+
+A typed comment has no parent, and §9 established that scoring `on_topic`
+against nothing is a documented cause of low confidence. Without somewhere to
+put context, every test comment would pen on `on_topic` for a reason that has
+nothing to do with what was typed. The optional "replying to…" field is what
+makes the approved case above reach 100%.
+
+### Rate limiting
+
+Spec §9 asked for a per-IP limit and a hard total cap on `/test`, since the API
+key is on the presenter's laptop and an open text box pointed at a paid API is
+the kind of thing that gets found. Both are in `web/limits.py`: a sliding
+per-IP window and a ceiling for the process run. A held request does not
+consume the total budget, or a retry loop would exhaust the cap without anyone
+ever getting an answer.
+
+At $0.000025 a comment this is about abuse rather than the cost of honest use —
+but §19 is the reminder that small numbers times a large multiplier is how the
+credits went the first two times.

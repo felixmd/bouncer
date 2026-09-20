@@ -185,6 +185,20 @@ TOKENS_PER_SECOND_CEILING = 250_000  # published
 # than bigger batches — and that trades directly against confidence.
 INPUT_COST_PER_MTOK_NOTE = "see FINDINGS §16"
 
+# --- Test-your-own-comment -------------------------------------------------
+
+# Spec §9: the API key is on the laptop, and an open text box pointed at a paid
+# API is the kind of thing that gets found. One comment costs ~$0.000025, so
+# these caps are about abuse rather than about the cost of honest use.
+TEST_PER_IP_PER_MINUTE = 6
+TEST_TOTAL_CAP = 400  # per process run
+
+# A typed comment has no thread, and `on_topic` scored against nothing is a
+# documented cause of low confidence (FINDINGS §9) — it would pen every test
+# comment for a reason that has nothing to do with the comment. The box takes
+# optional context; this is the referent when none is given.
+TEST_DEFAULT_CONTEXT = "An open comment thread, with no specific topic."
+
 # --- Paths -----------------------------------------------------------------
 
 THREADS_DIR = "data/threads"
