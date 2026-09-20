@@ -152,6 +152,9 @@ def counter_frame(pipeline: Pipeline) -> Div:
         data_rate=f"{counters.per_second:.0f}",
         data_spend=f"{stats.cost_usd:.4f}",
         data_decided=str(counters.decided),
+        # PRD §6.1: shown live beside the threshold control, so a viewer can
+        # move the knob and watch the trade rather than be told a percentage.
+        data_auto=f"{pipeline.auto_handled * 100:.0f}",
         # Errors are surfaced separately and never folded into the Pen count.
         # Under load a failed request pens fifteen comments, and a Pen padded
         # with failures is indistinguishable from one full of hard cases.
@@ -203,6 +206,30 @@ def build_frame(
     # `to_xml`, not `str`. `str()` on an FT object yields its children joined —
     # the frame went out as the literal text "lane-approvedlane-pentick" and the
     # ws extension silently found no elements to swap.
+    return "".join(to_xml(part) for part in parts)
+
+
+def resort_frame(pipeline: Pipeline, verdicts: list[Verdict]) -> str:
+    """Replace the lanes wholesale after a policy change.
+
+    A re-sort moves cards *between* lanes, so appending is not enough — each
+    lane is swapped with `innerHTML` and rebuilt. Capped at the DOM budget
+    rather than the whole re-judged window, since anything past 150 would be
+    evicted on arrival.
+    """
+    by_lane: dict[Lane, list[Verdict]] = {lane_: [] for lane_ in Lane}
+    for verdict in verdicts:
+        by_lane[verdict.lane].append(verdict)
+
+    parts = [
+        Div(
+            *(card(v) for v in items[-config.MAX_VISIBLE_CARDS:]),
+            id=LANE_IDS[lane_],
+            hx_swap_oob="innerHTML",
+        )
+        for lane_, items in by_lane.items()
+    ]
+    parts.append(counter_frame(pipeline))
     return "".join(to_xml(part) for part in parts)
 
 

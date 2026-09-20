@@ -127,7 +127,14 @@ CONFIDENCE_FLOOR = 0.85
 
 # --- Replay and render -----------------------------------------------------
 
-DRIP_RATE_PER_SECOND = 200  # UI slider
+# The ambient rate, and the cost dial — see FINDINGS §19. 205/s is $24.80/hour;
+# 60/s is $7.25 and still fills the wall, because the render cap only shows
+# ~96 cards/sec anyway. PRD §6's "≥200 items/sec sustained" is a claim about
+# *capability*, which is measured and recorded; it does not have to be burning
+# money while nobody is asking. The slider goes to 300 for the moment someone
+# does.
+DRIP_RATE_PER_SECOND = 60
+DRIP_RATE_MAX = 300
 RENDER_TICK_HZ = 12  # fixed tick; never one WS frame per classification
 MAX_VISIBLE_CARDS = 150  # hard DOM cap, evict from the tail
 

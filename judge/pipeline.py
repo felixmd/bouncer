@@ -27,7 +27,7 @@ import config
 from feed.replay import Comment, Replay, ThreadStore
 from judge.batcher import Batcher
 from judge.client import JudgeClient
-from judge.lanes import Lane, decision_confidence, lane
+from judge.lanes import DEFAULT_POLICY, Lane, Policy, decision_confidence, lane
 from judge.rubric import DEFAULT_RUBRIC, Rubric, normalise
 
 
@@ -115,6 +115,9 @@ class Pipeline:
     ) -> None:
         self.store = store
         self.rubric = rubric
+        # Mutable at runtime from the UI. Changing it re-sorts the backlog with
+        # no model calls, because scores and probabilities are already stored.
+        self.policy = DEFAULT_POLICY
         # Set by default so the console runner streams. web/app.py clears it
         # while no browser is connected — see Replay.demand.
         self.demand = asyncio.Event()
@@ -180,14 +183,57 @@ class Pipeline:
             verdicts.append(
                 Verdict(
                     comment=comment,
-                    lane=lane(scores, confidences, probabilities),
+                    lane=lane(scores, confidences, probabilities, policy=self.policy),
                     scores=scores,
                     confidences=confidences,
                     probabilities=probabilities,
-                    gate_confidence=decision_confidence(scores, probabilities),
+                    gate_confidence=decision_confidence(
+                        scores, probabilities, self.policy
+                    ),
                 )
             )
         return verdicts
+
+    def retune(self, policy: Policy) -> list[Verdict]:
+        """Apply a new policy and re-sort the backlog. **No model calls.**
+
+        This is the cheapest interesting thing in the demo: the scores and the
+        per-level probabilities are already stored, so moving a threshold or
+        switching the gate is a pure recompute over verdicts we have. A viewer
+        can drag the floor and watch the whole wall re-sort for nothing.
+
+        Contrast `judge/rubric.py`: editing *level wording* changes the question
+        and does need re-judging (spec §6). Thresholds do not.
+        """
+        self.policy = policy
+        out = []
+        for verdict in self.backlog.recent(config.REJUDGE_WINDOW):
+            if verdict.error or not verdict.confidences:
+                continue
+            verdict.lane = lane(
+                verdict.scores, verdict.confidences, verdict.probabilities,
+                policy=policy,
+            )
+            verdict.gate_confidence = decision_confidence(
+                verdict.scores, verdict.probabilities, policy
+            )
+            out.append(verdict)
+        return out
+
+    @property
+    def auto_handled(self) -> float:
+        """Share of the retained backlog the model handled without a human.
+
+        PRD §6.1 argues this should be a live number beside the threshold rather
+        than a hard-coded claim, so that a viewer can move the control and watch
+        the trade instead of being told about it.
+        """
+        recent = [
+            v for v in self.backlog.recent(config.REJUDGE_WINDOW) if not v.error
+        ]
+        if not recent:
+            return 0.0
+        return sum(1 for v in recent if v.lane is not Lane.PEN) / len(recent)
 
     # --- lifecycle ---------------------------------------------------------
 

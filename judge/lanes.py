@@ -28,6 +28,7 @@ choice. See calibrate/sweep.py for the curve both were picked from.
 """
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import StrEnum
 
 import config
@@ -50,19 +51,44 @@ class Gate(StrEnum):
 DEFAULT_GATE = Gate(config.CONFIDENCE_GATE)
 
 
-def _quality_rule_fires(scores: Mapping[str, float]) -> bool:
+@dataclass(frozen=True)
+class Policy:
+    """Every knob the lane decision turns on, in one value.
+
+    Passed in rather than read from `config` at call time so the UI can move a
+    threshold without mutating module globals — and, more importantly, so that
+    **re-sorting the backlog under a new policy costs nothing.** The scores and
+    probabilities are already stored; a new floor or gate is a pure recompute,
+    no model call. That is what makes the threshold slider in the UI free.
+    """
+
+    gate: Gate = DEFAULT_GATE
+    floor: float = config.CONFIDENCE_FLOOR
+    severity: float = config.SEVERITY_THRESHOLD
+    low_substance: float = config.LOW_SUBSTANCE_THRESHOLD
+    low_on_topic: float = config.LOW_ON_TOPIC_THRESHOLD
+
+
+DEFAULT_POLICY = Policy()
+
+
+def _quality_rule_fires(
+    scores: Mapping[str, float], policy: Policy = DEFAULT_POLICY
+) -> bool:
     """Low substance *and* off topic. Vacuous-but-relevant is not the bouncer's job."""
     return (
-        scores["substance"] <= config.LOW_SUBSTANCE_THRESHOLD
-        and scores["on_topic"] <= config.LOW_ON_TOPIC_THRESHOLD
+        scores["substance"] <= policy.low_substance
+        and scores["on_topic"] <= policy.low_on_topic
     )
 
 
-def _over_the_line(scores: Mapping[str, float]) -> bool:
+def _over_the_line(
+    scores: Mapping[str, float], policy: Policy = DEFAULT_POLICY
+) -> bool:
     return (
-        scores["hostility"] >= config.SEVERITY_THRESHOLD
-        or scores["contempt"] >= config.SEVERITY_THRESHOLD
-        or _quality_rule_fires(scores)
+        scores["hostility"] >= policy.severity
+        or scores["contempt"] >= policy.severity
+        or _quality_rule_fires(scores, policy)
     )
 
 
@@ -88,7 +114,9 @@ def _over_the_line_p(probabilities: Mapping[str, Mapping[int, float]]) -> bool:
 
 
 def decisive_confidence(
-    scores: Mapping[str, float], confidences: Mapping[str, float]
+    scores: Mapping[str, float],
+    confidences: Mapping[str, float],
+    policy: Policy = DEFAULT_POLICY,
 ) -> float:
     """The weakest confidence among the axes this comment's lane actually rests on.
 
@@ -98,7 +126,7 @@ def decisive_confidence(
     they did not contribute to the outcome.
     """
     relevant = [confidences["hostility"], confidences["contempt"]]
-    if _quality_rule_fires(scores):
+    if _quality_rule_fires(scores, policy):
         relevant += [confidences["substance"], confidences["on_topic"]]
     return min(relevant)
 
@@ -113,6 +141,7 @@ def _p_side(probabilities: Mapping[int, float], axis: str) -> float:
 def decision_confidence(
     scores: Mapping[str, float],
     probabilities: Mapping[str, Mapping[int, float]],
+    policy: Policy = DEFAULT_POLICY,
 ) -> float:
     """How sure the model is which *side of the line* this falls, on the axes
     that carried the verdict.
@@ -133,7 +162,7 @@ def decision_confidence(
     of traffic auto-handled. See FINDINGS §13.
     """
     axes = ["hostility", "contempt"]
-    if _quality_rule_fires(scores):
+    if _quality_rule_fires(scores, policy):
         axes += ["substance", "on_topic"]
     values = []
     for axis in axes:
@@ -147,31 +176,40 @@ def confidence_for(
     confidences: Mapping[str, float],
     gate: Gate,
     probabilities: Mapping[str, Mapping[int, float]] | None = None,
+    policy: Policy = DEFAULT_POLICY,
 ) -> float:
     if gate is Gate.MIN_ALL:
         return min(confidences.values())
     if gate is Gate.DECISION:
         if probabilities is None:
             raise ValueError("Gate.DECISION needs per-level probabilities")
-        return decision_confidence(scores, probabilities)
-    return decisive_confidence(scores, confidences)
+        return decision_confidence(scores, probabilities, policy)
+    return decisive_confidence(scores, confidences, policy)
 
 
 def lane(
     scores: Mapping[str, float],
     confidences: Mapping[str, float],
     probabilities: Mapping[str, Mapping[int, float]] | None = None,
-    gate: Gate = DEFAULT_GATE,
-    floor: float = config.CONFIDENCE_FLOOR,
+    gate: Gate | None = None,
+    floor: float | None = None,
+    policy: Policy = DEFAULT_POLICY,
 ) -> Lane:
-    """Route one comment. Scores are on the normalised 0-10 scale."""
+    """Route one comment. Scores are on the normalised 0-10 scale.
+
+    `gate` and `floor` override the policy for a single call, which is what the
+    calibration sweep wants; everything else comes from `policy`.
+    """
+    gate = policy.gate if gate is None else gate
+    floor = policy.floor if floor is None else floor
+
     if not confidences:
         return Lane.PEN
-    if confidence_for(scores, confidences, gate, probabilities) < floor:
+    if confidence_for(scores, confidences, gate, probabilities, policy) < floor:
         return Lane.PEN
     over = (
         _over_the_line_p(probabilities)
         if gate is Gate.DECISION
-        else _over_the_line(scores)
+        else _over_the_line(scores, policy)
     )
     return Lane.BOUNCED if over else Lane.APPROVED

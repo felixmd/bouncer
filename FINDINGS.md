@@ -777,9 +777,18 @@ Three ways down, in order of leverage:
 - **Index-address the two intrinsic axes.** §2's measured win from `quoted` was
   entirely on `on_topic` (+0.140) and `substance` (+0.031); `hostility` (−0.012)
   and `contempt` (+0.015) were both *ns*. So those two could take the comment
-  from the shared state instead of quoting it, halving the body duplication at
-  no measured confidence cost. Worth about 13% — untested, and the cheapest
-  honest saving on the list.
+  from the shared state instead of quoting it. Worth **~7%**, not the 13% first
+  estimated — index addressing still puts the body in the state once, so this
+  goes from four copies to three, not from four to two. Untested, and the
+  smallest of the three levers.
+
+**Done: the drip rate is now the ambient default, at 60/s.** Measured on the
+slider: 20/s gives 19 items/sec at 2 req/s, 200/s gives 195 items/sec at 13
+req/s — a 6.5× spend difference on one control. 60/s costs ~$7.25/hour and
+still fills the wall, because the render cap only shows ~96 cards/sec anyway.
+PRD §6's "≥200/sec sustained" is a claim about *capability*, it is measured and
+recorded in §16, and it does not need to be burning money while nobody is
+asking. The slider goes to 300 for the moment someone does.
 
 ### What actually drained it
 
@@ -838,3 +847,35 @@ The tell was there the whole time: the failure tracked lane *volume*, not lane
 identity. Decided cards are now kept out of the sampled list entirely, which is
 also the correct rule — §17's note that the Pen is never sampled applies just
 as much to a comment a human has already acted on.
+
+## 21. Retuning the policy is free, and it is the best thing in the demo
+
+Moving a threshold needs **no model calls at all**. Every verdict already
+carries its four scores and its four per-level probability distributions, so a
+new floor, a new severity threshold or a different gate is a pure recompute
+over verdicts already in hand. `Pipeline.retune` walks the retained backlog and
+re-runs `lane()`; nothing touches the API.
+
+Measured on the live wall, dragging only the confidence floor:
+
+| floor | Approved | Bounced | Pen | auto-handled |
+|---|---|---|---|---|
+| 0.99 | 150 (capped) | 1 | 150 (capped) | **31%** |
+| 0.85 | 150 (capped) | 23 | 141 | 75% |
+| 0.55 | 150 (capped) | 91 | 22 | **96%** |
+
+API requests over the whole exercise: **zero beyond the ongoing drip.**
+
+This matters more than it sounds. PRD §6.1 argued the auto-handled share should
+be a live number beside the control rather than a hard-coded "we handle 94%"
+claim the room cannot check — and it turns out that version is not just more
+honest, it is *cheaper than the claim*. A viewer drags the floor, watches the
+Pen fill or drain, and reads the trade off the screen. That is the calibration
+curve from §13 made physical, and it costs nothing to run.
+
+Worth keeping the distinction clear, because it is easy to conflate:
+
+- **Thresholds, gate, drip rate — free.** Pure recompute over stored verdicts.
+- **Rubric *wording* — expensive.** It changes the question, so the backlog has
+  to be re-judged (spec §6). That is the one in `TASKS.md` 6.2, and it is the
+  one that costs money.

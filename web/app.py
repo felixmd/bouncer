@@ -17,9 +17,14 @@ from fasthtml.common import (
     H2,
     B,
     Div,
+    Form,
     Header,
     I,
+    Input,
+    Label,
+    Option,
     Script,
+    Select,
     Span,
     Style,
     Title,
@@ -28,9 +33,9 @@ from fasthtml.common import (
 
 import config
 from feed.replay import ThreadStore
-from judge.lanes import Lane
+from judge.lanes import Gate, Lane, Policy
 from judge.pipeline import Pipeline
-from web.render import render_loop
+from web.render import render_loop, resort_frame
 
 CSS = """
 :root {
@@ -54,8 +59,25 @@ h1 span { color:var(--dim); font-weight:400; }
 .stat.err b { color:var(--bounced); }
 .stat.decided-stat b { color:#7fd18a; }
 
+.controls { display:flex; align-items:center; gap:1.4rem; padding:.4rem 1.2rem;
+  border-bottom:1px solid var(--edge); background:#12151c; }
+.ctl { display:flex; align-items:center; gap:.45rem; }
+.ctl label { color:var(--dim); font-size:.66rem; text-transform:uppercase;
+  letter-spacing:.09em; }
+.ctl input[type=range] { width:7rem; accent-color:var(--pen); }
+.ctl select { font:inherit; font-size:.72rem; background:#20242e; color:var(--ink);
+  border:1px solid var(--edge); border-radius:4px; padding:.15rem .3rem; }
+.ctl .val { font-size:.72rem; font-variant-numeric:tabular-nums; color:var(--ink);
+  min-width:2.6rem; }
+.ctl.auto { margin-left:auto; gap:.5rem; }
+.auto-label { color:var(--dim); font-size:.66rem; text-transform:uppercase;
+  letter-spacing:.09em; }
+.auto-value { font-size:1.05rem; font-weight:600; color:var(--approved);
+  font-variant-numeric:tabular-nums; }
+#tuner { margin:0; }
+
 .lanes { display:grid; grid-template-columns:1fr 1fr 1.3fr; gap:1px;
-  background:var(--edge); height:calc(100vh - 3.5rem); }
+  background:var(--edge); height:calc(100vh - 5.6rem); }
 /* min-width:0 matters: grid items default to min-width:auto, so one long
    unbroken comment stretches its column and squeezes the others. */
 .lane { background:var(--bg); display:flex; flex-direction:column;
@@ -136,6 +158,8 @@ const shown = {};
 function odometer() {
   const tick = document.getElementById('tick');
   if (tick) for (const key in tick.dataset) {
+    // 'auto' is a percentage rendered below, not a count to ease.
+    if (key === 'auto') continue;
     const el = document.getElementById('n-' + key);
     if (!el) continue;
     const target = parseFloat(tick.dataset[key]);
@@ -153,6 +177,25 @@ document.addEventListener('click', e => {
   const card = e.target.closest('.card.blurred');
   if (card) card.classList.toggle('shown');
 });
+
+// Slider readouts update on drag; the POST only fires on change (release), so
+// dragging does not spam the server with re-sorts.
+document.addEventListener('input', e => {
+  const el = e.target;
+  if (el.type !== 'range') return;
+  const out = document.getElementById('v-' + el.id);
+  if (!out) return;
+  out.textContent = el.id === 'drip' ? Math.round(el.value) + '/s'
+    : parseFloat(el.value).toFixed(el.id === 'floor' ? 2 : 1);
+});
+
+// The auto-handled share is a percentage, not a count, so it sits outside the
+// odometer loop's integer easing.
+setInterval(() => {
+  const tick = document.getElementById('tick');
+  const el = document.getElementById('n-auto');
+  if (tick && el && tick.dataset.auto) el.textContent = tick.dataset.auto + '%';
+}, 250);
 """.replace("__MAX__", str(config.MAX_VISIBLE_CARDS))
 
 
@@ -165,7 +208,77 @@ def lane(lane_id: str, title: str, note: str = "") -> Div:
     return Div(heading, Div(id=lane_id, cls="stack"), cls="lane")
 
 
-def page(store: ThreadStore) -> tuple:
+def controls(pipeline: Pipeline) -> Div:
+    """The tunables, surfaced — a convention, and here also the cost dial.
+
+    Moving any of the three policy controls re-sorts the retained backlog with
+    **no model calls**: the scores and per-level probabilities are already
+    stored, so a threshold change is a pure recompute. That is what makes this
+    strip worth having rather than a settings page — a viewer drags the floor
+    and the whole wall re-sorts for nothing.
+    """
+    policy = pipeline.policy
+    return Div(
+        Div(
+            Label("drip", For="drip"),
+            Input(
+                type="range", id="drip", name="rate", min="5",
+                max=str(config.DRIP_RATE_MAX), step="5",
+                value=str(int(pipeline.replay.rate)),
+                hx_post="/tune", hx_trigger="change", hx_swap="none",
+                hx_include="closest form",
+            ),
+            Span(f"{int(pipeline.replay.rate)}/s", id="v-drip", cls="val"),
+            cls="ctl",
+        ),
+        Div(
+            Label("confidence floor", For="floor"),
+            Input(
+                type="range", id="floor", name="floor", min="0.5", max="0.99",
+                step="0.01", value=f"{policy.floor:.2f}",
+                hx_post="/tune", hx_trigger="change", hx_swap="none",
+                hx_include="closest form",
+            ),
+            Span(f"{policy.floor:.2f}", id="v-floor", cls="val"),
+            cls="ctl",
+        ),
+        Div(
+            Label("severity", For="severity"),
+            Input(
+                type="range", id="severity", name="severity", min="2", max="10",
+                step="0.5", value=f"{policy.severity:.1f}",
+                hx_post="/tune", hx_trigger="change", hx_swap="none",
+                hx_include="closest form",
+            ),
+            Span(f"{policy.severity:.1f}", id="v-severity", cls="val"),
+            cls="ctl",
+        ),
+        Div(
+            Label("gate", For="gate"),
+            Select(
+                *(
+                    Option(g.value, value=g.value, selected=(g is policy.gate))
+                    for g in Gate
+                ),
+                id="gate", name="gate",
+                hx_post="/tune", hx_trigger="change", hx_swap="none",
+                hx_include="closest form",
+            ),
+            cls="ctl",
+        ),
+        # PRD §6.1: the auto-handled share as a live number beside the control,
+        # rather than a hard-coded "we handle 94%" claim the room cannot check.
+        Div(
+            Span("auto-handled", cls="auto-label"),
+            Span("—", id="n-auto", cls="auto-value"),
+            cls="ctl auto",
+        ),
+        id="controls",
+        cls="controls",
+    )
+
+
+def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
     """Returned as a tuple, not a full `Html`.
 
     Returning `Html(...)` would bypass FastHTML's page assembly and the `hdrs`
@@ -189,6 +302,7 @@ def page(store: ThreadStore) -> tuple:
                 cls="stats",
             ),
         ),
+        Form(controls(pipeline), id="tuner"),
         Div(
             lane("lane-approved", "Approved"),
             lane("lane-bounced", "Bounced", "click to reveal"),
@@ -273,7 +387,25 @@ def build():
 
     @rt("/")
     def home():
-        return page(store)
+        return page(store, pipeline)
+
+    @rt("/tune")
+    def tune(rate: float, floor: float, severity: float, gate: str):
+        """Move a knob. **No model calls.**
+
+        The drip rate takes effect on the next comment. The three policy values
+        re-sort the retained backlog immediately, because every verdict already
+        carries its scores and per-level probabilities — a new floor is a pure
+        recompute. Editing *rubric wording* is the expensive one and lives
+        elsewhere; thresholds are free.
+        """
+        pipeline.replay.rate = max(1.0, min(rate, config.DRIP_RATE_MAX))
+        resorted = pipeline.retune(
+            Policy(gate=Gate(gate), floor=floor, severity=severity)
+        )
+        # Re-render the lanes from scratch: a re-sort moves cards *between*
+        # lanes, so appending is not enough.
+        return resort_frame(pipeline, resorted)
 
     @rt("/decide")
     def decide(id: str, lane: str):

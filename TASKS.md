@@ -188,8 +188,8 @@ every request is rubric and comment duplication and we run at roughly half the
 API's maximum possible token rate.
 
 - [x] **5b.1 Judge only while someone is watching.** `Replay` waits on a demand event that `web/app.py` clears when no socket is connected. `preview_stop` does not kill the `uv run` child, so eight orphaned servers had been judging at ~225/s for nobody — this is what drained the account, and it also caused the 429 storm that looked like a rate-limit mystery in §16
-- [ ] **5b.2 Drop the default drip rate.** 205/s is $24.80/hour; 20/s is $2.42 and still reads as a stream. The headline number does not need to be sustained to be demonstrated — **needs a product call on what the ambient rate should be**
-- [ ] **5b.3 Index-address `hostility` and `contempt`.** §2's `quoted` win was entirely on `on_topic` and `substance`; both intrinsic axes were *ns*, so they can read the comment from the shared state instead of quoting it. ~13% cheaper at no measured confidence cost. Untested
+- [x] **5b.2 Ambient drip rate is 60/s** (~$7.25/hour), with a slider to 300 for the moment someone asks for the headline number. Measured: 20/s → 19 items/sec at 2 req/s, 200/s → 195 at 13 req/s, a 6.5× spend difference on one control. The render cap only shows ~96 cards/sec anyway
+- [ ] **5b.3 Index-address `hostility` and `contempt`.** §2's `quoted` win was entirely on `on_topic` and `substance`; both intrinsic axes were *ns*, so they can read the comment from shared state instead of quoting it. **~7%, not the 13% first estimated** — index addressing still puts the body in state once, so it is four copies to three. Smallest of the three levers, untested
 
 ## Phase 6 — the three interaction hooks
 
@@ -201,10 +201,11 @@ API's maximum possible token rate.
     came out a lateral move. A viewer editing a level mid-demo will plausibly
     make it worse, and "watch the confidence on that axis move" is a truer and
     more interesting story than "watch it get better"
-- [ ] **6.3 Surface the tunables** — threshold, floor, gate, batch size, drip rate
-  - config is already the single source; the UI reads from it, no second copy
-- [ ] **6.4 Auto-handled share as a live number** next to the threshold control — PRD §6.1
-  - replaces the hard-coded "94% / 6%" claim with something the room can check
+- [x] **6.3 Tunables surfaced** — drip rate, confidence floor, severity, gate
+  - **retuning is free**: every verdict carries its scores and per-level probabilities, so a new threshold is a pure recompute over the backlog with no model calls. Verified live — dragging the floor from 0.99 to 0.55 re-sorted the whole wall for zero extra API requests (`FINDINGS.md` §21)
+  - the expensive cousin is 6.2: rubric *wording* changes the question and does need re-judging
+- [x] **6.4 Auto-handled share is live** beside the controls — PRD §6.1
+  - 31% at floor 0.99, 75% at 0.85, 96% at 0.55. The honest version turned out to be cheaper to run than the hard-coded claim would have been
 
 ## Phase 7 — calibration tab
 

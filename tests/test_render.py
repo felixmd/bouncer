@@ -31,6 +31,7 @@ class FakePipeline:
 
     counters = Counters()
     client = FakeClient()
+    auto_handled = 0.82
 
 
 def comment(index: int = 0, body: str = "a comment body") -> Comment:
