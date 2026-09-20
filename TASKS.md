@@ -23,11 +23,20 @@ Throughput, cost, latency and batch size were never the risk — see `FINDINGS.m
 levels (§11), the `decisive` gate (§4), and gating on probability mass one side
 of the line rather than on scalar confidence (§13).
 
-One open problem, and it is a content problem rather than an engineering one:
+Two corpora on disk, both with three visible lanes:
 
-- **Bounced is 1%.** Hacker News argues by condescension, not by abuse, so
-  `hostility` almost never fires. A demo whose red lane never lights up is
-  two-thirds of a demo. `1.1d` (ChangeMyView) is what fixes it.
+| | Approved | Bounced | Pen |
+|---|---|---|---|
+| Hacker News | 77% | 3% | 19% |
+| ChangeMyView | 70% | 4% | 27% |
+
+**Bounced sits at 3–4% and further pipeline work will not move it.** `hostility`
+across 200 ChangeMyView comments maxes at 7.4 — nothing in a corpus selected for
+derailment reaches the rubric's top rung. That is what real forums look like,
+and the borderline slice going to the Pen is the product working as designed.
+`FINDINGS.md` §15 sets out the three ways to go; the recommendation is to accept
+it. **Needs a human decision before the UI is built**, because it determines
+what the Bounced lane is for.
 
 ---
 
@@ -69,11 +78,12 @@ calibration curve down.
   - earns its place rather than just being available: PRD §3's audience is "technical-adjacent", and condescension is HN's native register, which exercises `contempt` — the axis the PRD calls the interesting one
   - weakness: `hostility` fires rarely, so the Bounced lane is thin (1–2% on the probe)
 - [x] **1.1c `feed/store.py`** — anonymisation and schema shaping shared by all fetchers, so a new source cannot forget invariant 8
-- [ ] **1.1d `feed/convokit_fetch.py`** — ChangeMyView and Wikipedia Talk, with topic-keyword filtering
-  - real Reddit, threaded, curated for escalation into personal attacks — the material HN does not have
-  - corpus downloads openly, no credentials; the CMV zip is 51 MB
-  - filter out race / gender-identity / abortion threads at fetch time, per the decision on 2026-09-20
-  - *Done when:* a CMV thread is on disk and its Bounced lane is not empty
+- [x] **1.1d `feed/convokit_fetch.py`** — ChangeMyView, Wikipedia Talk and Winning Arguments
+  - [x] 866 comments from 120 conversations, 765 with parent context, no credentials
+  - [x] topic filter dropped 94 conversations; blunt by design, `--no-topic-filter` to see them
+  - [x] conversations bundled into one file. `TECHNICAL_SPEC.md` §3.3 said batch by thread so the shared state amortises — but under `quoted` addressing the state is *just the title*, so there is nothing left to amortise and bundling keeps batches full
+  - [x] found and fixed the rule/gate boundary mismatch — `FINDINGS.md` §14, Bounced roughly doubled on both corpora
+  - **Outcome:** ChangeMyView 70/4/27, Hacker News 77/3/19. Three visible lanes on both
 - [x] **1.2 Fetch threads and eyeball the pile** — three HN threads, 6,590 comments
   - `hn-47340079` (HN's own AI-comment moderation policy — 1,562), `hn-24872911` (YouTube-dl DMCA — 1,392), `hn-41002195` (CrowdStrike — 3,636)
   - spread is real on `contempt` and `substance`; **thin on `hostility`**, which is the known HN weakness and the reason 1.1d still matters

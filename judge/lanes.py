@@ -66,6 +66,27 @@ def _over_the_line(scores: Mapping[str, float]) -> bool:
     )
 
 
+def _over_the_line_p(probabilities: Mapping[str, Mapping[int, float]]) -> bool:
+    """The same verdict, read off the distribution rather than the mean.
+
+    Used with `Gate.DECISION` so that the rule and the gate are asking about the
+    *same line*. They were not: the rule thresholded the mean at 6.0 while the
+    gate asked about `P(level >= 3)`, which is 7.5 on the normalised scale. A
+    comment scoring 6.7 was therefore "over the line" by the rule while the gate
+    reported how unsure it was about a stricter line nobody was applying.
+
+    Accuracy-neutral — the two rules disagreed on five of 300 labelled comments
+    (FINDINGS §13) — so this is bought purely for coherence.
+    """
+    severity = any(
+        _p_side(probabilities[axis], axis) > 0.5 for axis in ("hostility", "contempt")
+    )
+    quality = all(
+        _p_side(probabilities[axis], axis) > 0.5 for axis in ("substance", "on_topic")
+    )
+    return severity or quality
+
+
 def decisive_confidence(
     scores: Mapping[str, float], confidences: Mapping[str, float]
 ) -> float:
@@ -148,4 +169,9 @@ def lane(
         return Lane.PEN
     if confidence_for(scores, confidences, gate, probabilities) < floor:
         return Lane.PEN
-    return Lane.BOUNCED if _over_the_line(scores) else Lane.APPROVED
+    over = (
+        _over_the_line_p(probabilities)
+        if gate is Gate.DECISION
+        else _over_the_line(scores)
+    )
+    return Lane.BOUNCED if over else Lane.APPROVED

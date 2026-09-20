@@ -503,3 +503,76 @@ decide on.
 known Hacker News weakness — `hostility` barely fires there — and it is what
 `TASKS.md` 1.1d (ChangeMyView) exists to fix. A demo whose red lane never
 lights up is only two-thirds of the story.
+
+## 14. The rule and the gate were asking about different lines
+
+Found while investigating why ChangeMyView — a corpus *curated for conversations
+that derail into personal attacks* — still produced only a 2% Bounced lane.
+
+Of 200 CMV comments, 25 (12%) were over the line on scores alone. **21 of those
+25 were penned.** Mean decision confidence on them was 0.699 against 0.917 for
+everything else. The model is systematically least sure about exactly the
+comments near the threshold, which is correct calibration and not the bug.
+
+The bug was that the two halves of the lane function disagreed about where the
+threshold was:
+
+- the **rule** asked `mean >= 6.0` on the normalised scale;
+- the **gate** asked about `P(level >= 3)`, and level 3 normalises to **7.5**.
+
+So a comment scoring 6.7 was over the line by the rule, while the gate reported
+how unsure it was about a stricter line nobody was applying. Reading the score
+distribution makes the mismatch obvious: `hostility` maxes at **7.4** across 200
+comments and *nothing* reaches 7.5. The expected score is a shrunk estimator —
+probability is always spread across levels — so thresholding the mean at a level
+value is far stricter than asking whether the model thinks it is that level.
+
+Aligning both halves on `P(level >= 3) > 0.5` is accuracy-neutral by §13 (the
+two rules disagreed on five of 300 labelled comments) and roughly doubled the
+Bounced lane on both corpora:
+
+| | Approved | Bounced | Pen |
+|---|---|---|---|
+| Hacker News, before | 79% | 1% | 20% |
+| Hacker News, after | 77% | **3%** | 19% |
+| ChangeMyView, before | 72% | 2% | 26% |
+| ChangeMyView, after | 70% | **4%** | 27% |
+
+**Lesson worth keeping:** when a gate and the decision it guards are derived
+from different quantities, check they refer to the same boundary. Nothing in the
+tests caught this, because every test supplied probabilities consistent with its
+scores by construction.
+
+## 15. A thin Bounced lane is a property of the data, not the pipeline
+
+Both corpora now sit at 3–4% Bounced, and further pipeline work will not move
+that much. `hostility` across 200 ChangeMyView comments: median 1.2, p75 3.4,
+p90 5.2, **max 7.4**. Nothing in a corpus selected for derailment reaches the
+rubric's top rung — "sustained abuse of a person: degrading language, or
+wishing harm on them".
+
+That is what real discussion forums look like. Most comments are fine, a
+meaningful slice is genuinely borderline, and unambiguous abuse is rare. The
+borderline slice going to the Pen is the product working as designed — PRD §5.1
+is explicit that amber means "Jev doesn't know, so a human decides", not "mildly
+toxic".
+
+So 70/4/27 is an honest picture, and it is arguably a *better* demo than a wall
+of red: it puts the attention where the PRD says it belongs. But it is a product
+decision rather than an engineering one, and there are three ways to go:
+
+1. **Accept it.** Three visible lanes, Pen at a quarter of traffic, and a claim
+   that survives contact with a trust-and-safety buyer who moderates real
+   forums.
+2. **Lower `SEVERITY_THRESHOLD` to the level-2 boundary.** Rubric level 2 is
+   "openly critical of a person's character, motives or intelligence, but not
+   abusive". Treating that as over the line is defensible for some products and
+   would bounce roughly 12% — but it is a change to what the demo *claims*
+   moderation means, not a tuning fix.
+3. **Source harsher data.** Civil Comments has `severe_toxicity`, `threat` and
+   `obscene` labels and plenty of unambiguous material. PRD §4.3 deliberately
+   keeps that dataset out of the Reddit path, and mixing it in to make the red
+   lane look busier would be staging the demo.
+
+Option 1 is the recommendation. Option 3 should be refused on the PRD's own
+terms.
