@@ -106,5 +106,24 @@ def test_the_calibration_tab_renders_without_a_key(client):
     assert "insult and abuse" in page.text
 
 
+def test_the_curve_shows_what_agreement_is_measured_against(client):
+    """The rising agreement line is mostly the subset shedding its toxic
+    comments (RESEARCH.md §5). Without the baseline beside it the chart claims
+    more than the data supports, so guard all three of the places that say so.
+    """
+    page = client.get("/calibration")
+    assert "approve everything" in page.text          # legend and line label
+    assert "stroke-dasharray" in page.text            # the reference line itself
+    assert "Read the gap, not the orange line" in page.text
+    # and the shipped floor is not the best point on the chart — say why
+    assert "lift peaks" in page.text
+
+
+def test_the_table_carries_the_base_rate_immune_column(client):
+    page = client.get("/calibration")
+    for header in ("approve-all", "lift", "balanced acc"):
+        assert header in page.text
+
+
 def test_an_unknown_gate_falls_back_rather_than_erroring(client):
     assert client.get("/calibration?gate=nonsense").status_code == 200

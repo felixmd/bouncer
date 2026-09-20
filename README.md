@@ -51,7 +51,7 @@ on screen:
 > The claim is not "this model is right."
 > The claim is **"this model knows when it isn't, and escalates."**
 
-## The proof
+## The proof, and what it is worth
 
 Not an assertion — a curve, on a second tab, from 300 human-labelled Civil
 Comments the model has never been tuned against.
@@ -59,31 +59,60 @@ Comments the model has never been tuned against.
 ![The calibration curve](docs/img/calibration.png)
 
 Raise the confidence floor and you auto-handle less but agree with the human
-label more. Every point is measured:
+label more. **Read the gap to the dashed line, not the orange line itself** —
+that is what approving everything would score on the same comments:
 
-| confidence floor | auto-handled | agreement on those |
-|---|---|---|
-| 0.50 (escalate nothing) | 100% | 0.807 |
-| 0.70 | 84% | 0.853 |
-| **0.85 — shipped** | **70%** | **0.876** |
-| 0.95 | 57% | 0.924 |
-| 0.99 | 47% | 0.950 |
+| confidence floor | auto-handled | agreement | approve everything | **lift** | balanced acc |
+|---|---|---|---|---|---|
+| 0.50 (escalate nothing) | 100% | 0.807 | 0.700 | **+0.107** | 0.729 |
+| 0.65 | 89% | 0.850 | 0.742 | **+0.109** | **0.748** |
+| **0.85 — shipped** | **70%** | **0.876** | 0.837 | **+0.038** | 0.641 |
+| 0.95 | 57% | 0.924 | 0.907 | +0.017 | 0.594 |
+| 0.99 | 47% | 0.950 | 0.943 | **+0.007** | 0.562 |
 
-**Monotonic, which is the whole ballgame.** If confidence were noise this line
-would be flat and the Pen would be decoration. Instead, escalating the least
-certain 30% buys nearly seven points of agreement on everything you keep — and
-you can pick any other operating point on that curve by dragging a slider.
+**The confidence signal is real, and it is smaller than the orange line looks.**
+Raising the floor does not only remove comments the model is unsure about — it
+removes *toxic* ones, so the auto-handled set goes from 30% toxic to 5.7% toxic
+and gets easier as it shrinks. Agreement climbs either way. What the gate
+actually buys over doing nothing falls from +0.107 to +0.007, and balanced
+accuracy — which is immune to that shift entirely — **peaks at floor 0.65 and
+declines after it**.
 
-The caveat is printed above the chart in the app, too: the human label here is
-overwhelmingly insult and abuse, so this tests `hostility` and `contempt` and
-says nothing about `substance` or `on_topic`, which need thread context this
-corpus does not have.
+So the honest claim is narrower than "confidence predicts accuracy":
 
-That missing context is also why the screenshot at the top reads **93%**
-auto-handled at the same 0.85 floor this table scores at 70%. `on_topic`
-confidence is 0.50 when there is nothing to be on-topic about, and 0.86 on a
-real thread with a parent to score against. The curve is measured where the
-labels are, which happens to be the pessimistic place to measure it.
+> Confidence-gating buys **precision on the comments you act on
+> automatically**. Past a floor of about 0.65 it stops buying accuracy and
+> starts buying class balance.
+
+That is still a good claim, and it is the one the app now makes on the
+calibration tab, in the chart itself. The threshold-free number, immune to both
+base rate and operating point, is **AUC 0.864** — zero-shot, from eight
+sentences of hand-written rubric and no training data at all.
+
+Two more things a careful reader will ask:
+
+**Why ship 0.85 rather than the 0.65 where lift peaks?** Because lift is not
+the only objective. Precision on automated actions keeps climbing past that
+point — 0.82 at 0.65, 0.83 at 0.85, 1.00 at 0.90 — and wrongly bouncing someone
+is the expensive error in moderation. It is a deliberate choice of a different
+target, not the best number on the chart. The consequence is that at 0.85 the
+system runs **0.989 specificity and 0.294 recall**: it automates the benign
+majority at high precision and hands a human most of the actual toxicity. That
+is the right shape for a triage queue and the wrong shape for anyone selling
+"we automate moderation".
+
+**Why does the screenshot at the top read 93% auto-handled where this table
+says 70%?** Different corpora. `on_topic` confidence is 0.50 when there is
+nothing to be on-topic about and 0.86 on a real thread with a parent to score
+against. The curve is measured where the labels are, which is the pessimistic
+place to measure it.
+
+The caveat printed above the chart applies to all of it: the human label here
+is overwhelmingly insult and abuse, so this tests `hostility` and `contempt`
+and says nothing about `substance` or `on_topic`.
+
+Full analysis in [`RESEARCH.md`](RESEARCH.md) §5; reproduce with
+`uv run python -m calibrate.baseline`.
 
 ---
 
@@ -410,7 +439,8 @@ counting, by design.
 | latency | p50 285 ms, p95 1,291 ms |
 | lanes | ~73% Approved · ~4% Bounced · ~23% Pen on the shipped recording. Bounced holds at 3–4%; the Pen runs 15–27% depending on which thread is streaming |
 | cost | $0.034 per 1,000 comments — **and $0.41 per minute of streaming** |
-| calibration | agreement 0.807 → 0.950 as the floor rises; monotonic |
+| calibration | AUC 0.864 zero-shot. Confidence-gating lifts agreement +0.107 over always-approve at floor 0.50, +0.038 where we ship |
+| at the shipped floor | specificity 0.989, recall 0.294 — precision-leaning by choice |
 | re-judge | 776 comments re-scored in 3.2 s for $0.032 |
 | tests | 128, none of which need network or a key |
 

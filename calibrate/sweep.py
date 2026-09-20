@@ -19,6 +19,16 @@ It sweeps two things, because the second turned out to matter more:
   decision  probability mass on one side of the line, not concentration across
             levels — the gate the app actually ships (FINDINGS §13)
 
+**Agreement alone overstates the result, so this reports the baseline beside
+it.** Raising the floor removes *toxic* comments from the auto-handled subset,
+not just uncertain ones — 30% toxic at floor 0.50, 5.7% at 0.99 — and a subset
+that is one-class is easy. `always` is what "approve everything" scores on the
+same subset, which is an implementable strategy rather than an oracle because
+the benign class is the majority at every floor. `lift` is the difference and
+it is the honest number. `balacc` is the mean of TPR and TNR, immune to the
+shift entirely, and it *peaks near floor 0.65 and falls after it*. See
+`calibrate/baseline.py` for the full analysis, and `RESEARCH.md` §5.
+
 **What this measures, and what it does not.** Agreement is against Civil
 Comments' human `toxicity` label, which is overwhelmingly insult and abuse — so
 it is a fair test of `hostility` and `contempt` and no test at all of
@@ -75,6 +85,7 @@ def sweep(scored: dict, labels: dict[str, bool]) -> dict:
             if not auto:
                 series.append(
                     {"floor": floor, "auto": 0.0, "agreement": None,
+                     "always": None, "lift": None, "balanced": None,
                      "precision": None, "recall": None, "n": 0}
                 )
                 continue
@@ -86,29 +97,54 @@ def sweep(scored: dict, labels: dict[str, bool]) -> dict:
                 tp += predicted and actual
                 fp += predicted and not actual
                 fn += (not predicted) and actual
+            n = len(ids)
+            tn = correct - tp
+            agreement = correct / n
+            # the majority class is "not toxic" at every floor, so this is
+            # simply "approve everything" — something you could actually ship
+            always = (n - tp - fn) / n
+            tpr = tp / (tp + fn) if tp + fn else None
+            tnr = tn / (tn + fp) if tn + fp else None
             series.append(
                 {
                     "floor": floor,
                     "auto": len(auto) / len(scored),
-                    "agreement": correct / len(auto),
+                    "agreement": agreement,
+                    "always": always,
+                    "lift": agreement - always,
+                    "balanced": (tpr + tnr) / 2 if tpr is not None and tnr is not None else None,
                     "precision": tp / (tp + fp) if tp + fp else None,
-                    "recall": tp / (tp + fn) if tp + fn else None,
-                    "n": len(auto),
+                    "recall": tpr,
+                    "n": n,
                 }
             )
         out["gates"][gate] = series
     return out
 
 
-def knee(series: list[dict]) -> dict | None:
-    """The best agreement among points that keep most traffic automated.
+def cell(point: dict, key: str, spec: str = ".3f") -> str:
+    value = point[key]
+    return f"{value:{spec}}" if value is not None else "—"
 
-    PRD §6.1's shape: a Pen that is visible but not the whole wall. Picking the
-    maximum agreement instead would always choose the strictest floor, where
-    almost nothing is auto-handled and the number is meaningless.
+
+def knee(series: list[dict]) -> dict | None:
+    """The best **lift over always-approve**, among points that keep most
+    traffic automated.
+
+    This used to maximise raw agreement, and that was wrong for the reason the
+    module docstring gives: agreement rises as the auto-handled subset loses
+    its toxic comments, so maximising it picks the strictest floor available
+    and calls a subset that is 94% one class a success. It chose floor 0.95,
+    where the gate beats doing nothing by 0.017.
+
+    Lift is the honest target and it picks floor 0.60–0.65, which is also where
+    balanced accuracy peaks. **The app ships 0.85 anyway** — a deliberate
+    choice of a different objective, precision on automated actions, which
+    keeps climbing past the lift peak (0.82 at 0.65, 1.00 at 0.90). The knee is
+    reported so the gap between the two is visible rather than implied.
     """
-    candidates = [p for p in series if 0.55 <= p["auto"] <= 0.95 and p["agreement"]]
-    return max(candidates, key=lambda p: p["agreement"]) if candidates else None
+    candidates = [p for p in series if 0.55 <= p["auto"] <= 0.95 and p["lift"] is not None]
+    return max(candidates, key=lambda p: p["lift"]) if candidates else None
 
 
 def main() -> None:
@@ -126,17 +162,19 @@ def main() -> None:
     print(f"{curve['n']} labelled comments, {sum(labels.values())} toxic\n")
     for gate, series in curve["gates"].items():
         print(f"  {gate}")
-        print(f"    {'floor':>6} {'auto':>6} {'agree':>7} {'prec':>6} {'rec':>6} {'n':>5}")
+        print(f"    {'floor':>6} {'auto':>6} {'agree':>7} {'always':>7} {'lift':>7} "
+              f"{'balacc':>7} {'prec':>6} {'rec':>6} {'n':>5}")
         for point in series:
-            agree = f"{point['agreement']:.3f}" if point["agreement"] is not None else "—"
-            prec = f"{point['precision']:.2f}" if point["precision"] is not None else "—"
-            rec = f"{point['recall']:.2f}" if point["recall"] is not None else "—"
-            print(f"    {point['floor']:>6.2f} {point['auto']:>5.0%} {agree:>7} "
-                  f"{prec:>6} {rec:>6} {point['n']:>5}")
+            print(f"    {point['floor']:>6.2f} {point['auto']:>5.0%} "
+                  f"{cell(point, 'agreement'):>7} {cell(point, 'always'):>7} "
+                  f"{cell(point, 'lift', '+.3f'):>7} {cell(point, 'balanced'):>7} "
+                  f"{cell(point, 'precision', '.2f'):>6} "
+                  f"{cell(point, 'recall', '.2f'):>6} {point['n']:>5}")
         best = knee(series)
         if best:
             print(f"    knee: floor {best['floor']:.2f} → "
-                  f"{best['auto']:.0%} auto-handled, {best['agreement']:.3f} agreement")
+                  f"{best['auto']:.0%} auto-handled, {best['agreement']:.3f} agreement, "
+                  f"{best['lift']:+.3f} over always-approve")
         print()
 
     if args.write:

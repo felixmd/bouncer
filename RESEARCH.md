@@ -294,9 +294,19 @@ arguably the right product shape anyway. But "agreement rises from 0.807 to
 0.950 as the floor rises" should not be presented as evidence of calibration
 without the baseline column beside it.
 
-**This supersedes FINDINGS §24 and the proof section of the README, both of
-which quote the uncorrected curve.** The measurement is reproducible from
-`calibrate/baseline.py`.
+**This supersedes FINDINGS §24**, which is now annotated to say so, and
+[`FINDINGS.md`](FINDINGS.md) §27 carries the full correction. The calibration
+tab draws the baseline as a dashed line on the chart rather than describing it
+underneath, because the shape of the chart alone reads as a better result than
+it is; the README's proof section carries the baseline and lift columns. The
+measurement is reproducible from `calibrate/baseline.py`.
+
+One thing the correction turned up on its own: `sweep.py`'s automatic "knee"
+selector **was optimising the inflated metric**. It maximised raw agreement,
+which always picks the strictest floor on offer — it chose 0.95, where the gate
+beats doing nothing by 0.017. It now maximises lift and picks 0.60. A metric
+that measures the dataset rather than the model will quietly propagate into
+anything built on top of it.
 
 ### The threshold-free number
 

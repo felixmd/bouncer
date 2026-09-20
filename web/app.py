@@ -45,7 +45,7 @@ from judge.lanes import Gate, Lane, Policy
 from judge.offline import BANNER, OfflineClient, restrict
 from judge.pipeline import Pipeline
 from judge.rubric import Rubric
-from web.calibration import GATE_BLURB, chart
+from web.calibration import GATE_BLURB, READING, WHY_SHIPPED, chart
 from web.calibration import load as load_curve
 from web.calibration import table as curve_table
 from web.limits import RateLimiter
@@ -237,13 +237,16 @@ body.page { overflow:auto; }
   background:#12151c; }
 .gate-tab.on { color:var(--ink); border-color:#388bfd; background:#111a28; }
 .gate-blurb { color:var(--dim); font-size:.74rem; margin-bottom:.8rem; }
-/* Legend always present for two series; identity is never colour alone. */
+/* Legend always present; identity is never colour alone. The baseline key is
+   dashed to match its line — it is a reference, not a third series. */
 .legend { display:flex; gap:1.1rem; margin-bottom:.2rem; }
 .key { font-size:.72rem; color:var(--dim); display:flex; align-items:center;
   gap:.35rem; }
 .key::before { content:""; width:12px; height:2px; border-radius:1px; }
 .key-auto::before { background:#388bfd; }
 .key-agree::before { background:#db6d28; }
+.key-baseline::before { background:none; height:0;
+  border-top:2px dashed #7d8590; border-radius:0; }
 .curve { width:100%; height:auto; display:block; background:var(--panel);
   border:1px solid var(--edge); border-radius:6px; }
 .curve .tick { fill:var(--dim); font-size:11px; font-variant-numeric:tabular-nums; }
@@ -255,6 +258,13 @@ body.page { overflow:auto; }
 .curve .tip { fill:var(--ink); font-size:11px; }
 .curve .tip.auto { fill:#388bfd; }
 .curve .tip.agree { fill:#db6d28; }
+.curve .tip.baseline, .curve .endlabel.baseline { fill:#7d8590; }
+/* The reading sits under the chart, not in a drawer: the shape of the chart
+   alone reads as a better result than it is. */
+.reading { font-size:.76rem; color:var(--ink); line-height:1.5;
+  margin:.7rem 0 0; max-width:74ch; }
+.reading.muted { color:var(--dim); margin-top:.5rem; }
+.curve-table td.muted { color:var(--dim); }
 /* Hover reveals a crosshair and readout. Every value is also in the table
    below, so the tooltip enhances rather than gates. */
 .curve .col-chrome { opacity:0; pointer-events:none; }
@@ -729,9 +739,12 @@ def build(offline: bool = False, public: bool = False):
                 Div(
                     Span("auto-handled", cls="key key-auto"),
                     Span("agreement on those", cls="key key-agree"),
+                    Span("approve everything", cls="key key-baseline"),
                     cls="legend",
                 ),
                 chart(curve, gate),
+                Div(READING, cls="reading"),
+                Div(WHY_SHIPPED, cls="reading muted"),
                 Details(
                     Summary("table view"),
                     curve_table(curve, gate),

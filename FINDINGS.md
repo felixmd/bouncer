@@ -1001,6 +1001,12 @@ half the time in front of the room.
 
 ## 24. The calibration curve, and the claim it actually supports
 
+> **Superseded in part by §27.** The curve below is correct and the reading of
+> it in this section is not: agreement rises with the floor largely because the
+> auto-handled subset sheds its toxic comments, and against the right baseline
+> the gate buys a third of what this section claims. The chart in the app now
+> carries that baseline. Read §27 with this one.
+
 PRD §4.3's second screen, and the direct answer to the accuracy objection in
 §2. Entirely offline — it renders a recorded sweep from `calibrate/curve.json`
 and calls nothing, which is deliberate: the objection gets answered from
@@ -1166,3 +1172,105 @@ unrepresentative.
 10 minutes on mains, 4 on battery. That will interrupt a presentation, and it is
 a system-wide setting rather than anything this project owns, so it is in
 `DEMO.md` as a pre-flight step with the commands rather than changed silently.
+
+## 27. §24's curve is mostly the base rate
+
+Measured 2026-09-20 while writing `RESEARCH.md`, via `calibrate/baseline.py`.
+It is the largest correction in this document and it lands on the project's
+headline claim.
+
+§24 reported agreement on the auto-handled subset rising monotonically with the
+confidence floor — 0.807 to 0.950 — and read that as *the model's confidence
+predicts its accuracy*. The first half is a fact. The second half does not
+follow from it.
+
+**Raising the floor does not only remove comments the model is unsure about. It
+removes toxic ones.** The auto-handled subset goes from 30.0% toxic at floor
+0.50 to 5.7% at 0.99. A subset that is 94% one class is trivially easy, and
+agreement on it rises whether or not the model got better at anything.
+
+The right comparison is what "approve everything" scores **on that same
+subset** — an implementable strategy rather than an oracle, because the benign
+class is the majority at every floor:
+
+| floor | auto | toxic in subset | agreement | always-approve | **lift** | balanced acc | F1 | MCC |
+|---|---|---|---|---|---|---|---|---|
+| 0.50 | 100% | 30.0% | 0.807 | 0.700 | **+0.107** | 0.729 | 0.623 | 0.511 |
+| 0.60 | 93% | 27.6% | 0.835 | 0.724 | **+0.111** | 0.737 | 0.635 | 0.558 |
+| **0.65** | 89% | 25.8% | 0.850 | 0.742 | **+0.109** | **0.748** | **0.649** | **0.580** |
+| 0.75 | 80% | 20.5% | 0.866 | 0.795 | +0.071 | 0.711 | 0.579 | 0.539 |
+| **0.85** *(shipped)* | 70% | 16.3% | 0.876 | 0.837 | **+0.038** | 0.641 | 0.435 | 0.448 |
+| 0.95 | 57% | 9.3% | 0.924 | 0.907 | +0.017 | 0.594 | 0.316 | 0.416 |
+| 0.99 | 47% | 5.7% | 0.950 | 0.943 | **+0.007** | 0.562 | 0.222 | 0.345 |
+
+Three readings:
+
+1. **Lift collapses from +0.107 to +0.007.** At floor 0.99, where the agreement
+   number looks best, the gate beats approving everything by seven thousandths.
+2. **On base-rate-immune metrics the system gets worse above floor 0.65.**
+   Balanced accuracy peaks at 0.748 and falls to 0.562; F1 peaks at 0.649 and
+   falls to 0.222; MCC peaks at 0.580 and falls to 0.345. Past that point the
+   gate is buying class balance, not skill.
+3. **The signal is still real.** Lift is positive at every floor, MCC at the
+   low end is 0.511, and balanced accuracy genuinely improves between 0.50 and
+   0.65. Confidence carries information — roughly a third of what §24 implied.
+
+### The threshold-free number
+
+Ranking AUC over all 300, immune to both base rate and operating point:
+
+| ranking signal | AUC |
+|---|---|
+| max P(level≥3) across both severity axes | **0.864** |
+| `hostility` alone | 0.842 |
+| `contempt` alone | 0.834 |
+| max raw score | 0.848 |
+
+**0.864 zero-shot, from eight hand-written sentences and no training data.**
+That is the number to quote in both directions: strong for a system that saw no
+labels, and the number a fine-tuned classifier should be expected to beat.
+
+### What the operating point actually does
+
+| at floor 0.85 | |
+|---|---|
+| specificity | **0.989** |
+| recall | **0.294** |
+| precision | 0.833 |
+
+The system automates the benign majority very reliably and escalates 71% of the
+actual toxicity. For a triage queue that is the correct shape — wrongly
+bouncing someone is the expensive error, and precision on automated actions
+keeps climbing past the lift peak (0.82 at 0.65, 1.00 at 0.90). It is the wrong
+shape for any claim that begins "we automate moderation".
+
+Recall is also partly a choice rather than a ceiling. Sweeping the *severity*
+threshold instead of the confidence floor, F1 peaks at a far more permissive
+rule than the one we ship — 0.696 at `P(over) > 0.2` against 0.623 at 0.5 — and
+moving along that curve costs nothing, because the probabilities are already
+stored (§21).
+
+### What changed as a result
+
+- `calibrate/sweep.py` reports `always`, `lift` and `balanced` on every row.
+- **`knee()` was optimising the inflated metric.** It maximised raw agreement,
+  which always picks the strictest floor available; it picked 0.95, at +0.017.
+  It now maximises lift and picks 0.60. The shipped floor stays at 0.85 for the
+  precision reason above, and the gap between the two is now visible rather
+  than implied.
+- The calibration tab draws the baseline as a dashed line **on the chart**, not
+  as a footnote, because the shape of the chart alone reads as a better result
+  than it is. Two paragraphs under it explain the gap and why 0.85 ships anyway.
+- `README.md` and `RESEARCH.md` §5 carry the corrected table.
+
+### The methodological lesson, which is §8's again
+
+§8 recorded reporting a rubric change as a win on the strength of aggregate
+rates that moved two comments out of 300. This is the same error one level up:
+a metric that *looked* like it measured the model measured the dataset instead,
+and it survived for two days and into three artefacts because the curve had the
+shape we expected.
+
+**Check what a trivial baseline scores on exactly the data you are scoring.**
+It costs one column and it is the difference between a real result and a
+restatement of the class balance.
