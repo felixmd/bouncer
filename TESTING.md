@@ -210,17 +210,27 @@ Needs `TYPESAFE_API_KEY` in `.env`. **Check there are credits first** — the
 account has run out twice, and the symptom is every card reading
 "could not judge" (which is the correct failure, but not a demo).
 
-### 3.1 A bounded pipeline run — ~$0.08
+Note that 3.1 is the only check in this file with no browser in it. The wall
+starts at 3.2 and stays up for 3.3 as well.
+
+### 3.1 Throughput on your own network — console only, ~$0.08
 
 ```bash
 uv run --env-file .env python -m judge.pipeline --rate 200 --seconds 10
 ```
 
-Console only, no browser, stops on its own. **There is no `--offline` for this
-command; it always calls the model.**
+**This is a benchmark, not the app.** It drives the pipeline straight from the
+command line, prints a summary and exits — it starts no web server, so nothing
+will be at <http://127.0.0.1:5001> during or after it. A browser there will
+say the site is unreachable, or show your proxy's 404. That is the command
+working.
+
+**There is no `--offline` for it either; it always calls the model.**
 
 **Expect** a summary: ~200/sec, a handful of errors at most, p50 latency around
-300ms, and a lane mix near 80/4/16.
+300ms, and a lane mix near 80/4/16. The p50 is the number worth comparing — the
+docs quote 285ms from a laptop on a home connection, and a corporate network
+sits somewhere else.
 
 ### 3.2 Test your own comment — ~$0.000034 each, 6/min
 
