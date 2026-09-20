@@ -14,10 +14,16 @@ not done until someone has read the number.
 
 ## Where things stand
 
-**Everything in the PRD is built.** The wall, all three interaction hooks, the
-tunables, and the calibration curve. What remains is demo readiness (Phase 8),
-the offline replay mode (4b.2), and one judgement call nobody has made yet
-(2.3 — reading the Pen cold to confirm it is genuinely hard).
+**Built, measured and ready to show.** `DEMO.md` is the runbook.
+
+Two things are left, and neither is code:
+
+- **2.3 — read the Pen cold.** PRD success criterion 4, and the one thing
+  measurement cannot settle: are the penned comments genuinely hard? Free and
+  repeatable now via `--offline`.
+- **8.1 — stop the machine sleeping.** 10 minutes on mains will interrupt a
+  demo. Commands in `DEMO.md`; not changed silently because it is a system-wide
+  setting.
 
 
 **The demo runs end to end.** 7,456 pre-baked comments on disk streaming through
@@ -233,10 +239,16 @@ auto-handled share.
 
 ## Phase 8 — demo readiness
 
-- [ ] **8.1** Disable sleep on the presenting machine
-- [ ] **8.2** Measure latency and throughput from the demo machine and network
-- [ ] **8.3** If exposing via tunnel: per-IP limit on `/test`, hard total cap
-- [ ] **8.4** Two full dry runs, back to back — identical re-runs are the point of pre-baked data
+`DEMO.md` is the runbook: mode choice, pre-flight, what to say when someone
+pushes back, and the known rough edges.
+
+- [~] **8.1 Sleep** — **needs a human.** The machine sleeps after 10 min on mains, 4 on battery, which will interrupt a demo. Not changed silently: it is a system-wide setting. Commands are in `DEMO.md`
+- [x] **8.2 Measured from this machine and network** — 45s live at drip 250/s: **212.3 items/sec**, 0.9% errors, p50 275ms, p95 1,766ms, 74% of the token ceiling. Clears the PRD's 200/sec target for real rather than by assumption
+- [x] **8.3 Exposure audit — and spec §9 had protected the wrong route.** `FINDINGS.md` §26
+  - `/rubric` is **790× more expensive per click than `/test`** (~$0.027 vs ~$0.000034) and had **no limit at all** — it did not exist when §9 was written. Now 2/min per IP, 30 per run, applied always rather than only when exposed
+  - the larger exposure is the drip slider: spends nothing itself, decides how fast money leaves, and anyone reaching the page could set 300/s (~$36/hour). `--public` clamps it to 60/s
+  - lesson: cost out every reachable route, not the one named in the doc
+- [x] **8.4 Two dry runs, back to back** — cold starts, clean both times, and the lane mix reproduces to within half a point (72.8/3.4/23.7 then 72.2/3.5/24.3). That is spec §5.3's identical-re-runs property, and it matters because a demo gets given twice
 
 ---
 

@@ -193,6 +193,18 @@ INPUT_COST_PER_MTOK_NOTE = "see FINDINGS §16"
 TEST_PER_IP_PER_MINUTE = 6
 TEST_TOTAL_CAP = 400  # per process run
 
+# **Spec §9 named /test, but /rubric is the expensive route.** A re-judge is
+# ~800 comments — roughly $0.027 a click, 790x a test comment — and it had no
+# limit at all until this was written. Tight, because an accidental double-click
+# costs real money even on a laptop with nobody else on the network.
+REJUDGE_PER_IP_PER_MINUTE = 2
+REJUDGE_TOTAL_CAP = 30
+
+# The largest exposure is not a route that spends money directly; it is the drip
+# slider, which anyone reaching the page can push to DRIP_RATE_MAX and leave
+# there. At 300/s that is ~$36/hour. `--public` clamps it.
+DRIP_RATE_MAX_PUBLIC = 60
+
 # A typed comment has no thread, and `on_topic` scored against nothing is a
 # documented cause of low confidence (FINDINGS §9) — it would pen every test
 # comment for a reason that has nothing to do with the comment. The box takes

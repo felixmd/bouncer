@@ -1100,3 +1100,69 @@ A banner across the top says what is being replayed.
 `TASKS.md` 2.3 — reading 30 penned comments cold to decide whether they are
 genuinely hard — is PRD success criterion 4 and the one thing measurement cannot
 settle. It now costs nothing to do, repeatedly, by anyone, with no key.
+
+## 26. Demo readiness, and the route spec §9 did not know about
+
+### The measured number, from the machine that will present
+
+45 seconds live, drip 250/s:
+
+```
+9,552 judged in 45.0s = 212.3/sec     approved 81%  bounced 3%  pen 15%
+639 requests, 6 errors (0.9%)         latency p50 275ms, p95 1,766ms
+875 tokens/comment                    185,797 tokens/sec — 74% of the ceiling
+$0.3512                               14.2 req/sec of the 20/sec budget
+```
+
+**Clears the PRD's 200/sec target on this machine and this network**, which is
+what §9 of the spec asked to be verified rather than assumed. The six errors are
+429s at three-quarters of the published token ceiling — the shape §16 predicts,
+not a new problem.
+
+### The exposure audit found the wrong route protected
+
+Spec §9 says: per-IP rate limit on `/test` and a hard cap on total requests. Both
+were in place. Costing the routes out shows `/test` is the *cheapest thing on the
+list*:
+
+| route | per click | was limited |
+|---|---|---|
+| `/tune` | free — **but it sets the burn rate** | no |
+| `/rubric` | **~$0.027** (an 800-comment re-judge) | **no** |
+| `/test` | ~$0.000034 | yes, 6/min |
+| `/decide`, `/calibration` | free | n/a |
+
+`/rubric` is **790× more expensive per click than `/test`** and had no limit at
+all — it did not exist when spec §9 was written. It is now 2/min per IP and 30
+per process run, and the limit applies always rather than only when exposed: an
+accidental double-click costs money on a laptop too.
+
+The larger exposure is subtler. **The drip slider spends no money itself and
+decides how fast money leaves.** Anyone reaching the page can push it to 300/s
+and walk away, which is ~$36/hour. `--public` clamps the ceiling to 60/s.
+
+The general lesson: a security note written against one feature does not cover
+the features added afterwards, and the cheapest route to protect is rarely the
+one that got protected. Cost out every reachable route, not the one in the doc.
+
+### Two dry runs
+
+Back to back, cold starts, offline. The lane mix reproduces:
+
+| | Approved | Bounced | Pen |
+|---|---|---|---|
+| run 1 | 72.8% | 3.4% | 23.7% |
+| run 2 | 72.2% | 3.5% | 24.3% |
+
+Within half a point — which is the "identical re-runs" property spec §5.3 wanted
+from pre-baked data, and it matters because a demo gets given twice. The
+absolute counts differ only because the two samples were taken at different
+elapsed times; `Replay` also shuffles within a thread by default, since file
+order front-loads top-level comments and makes the first minute
+unrepresentative.
+
+### The machine will sleep
+
+10 minutes on mains, 4 on battery. That will interrupt a presentation, and it is
+a system-wide setting rather than anything this project owns, so it is in
+`DEMO.md` as a pre-flight step with the commands rather than changed silently.

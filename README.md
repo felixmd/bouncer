@@ -10,9 +10,10 @@ The Pen is the point. It holds the comments Jev judged with low confidence, wher
 a human decides. The claim the demo makes is not "this model is right" — it is
 "this model knows when it isn't, and escalates."
 
+- `DEMO.md` — **the runbook.** Read this before showing it to anyone
+- `FINDINGS.md` — **what measurement changed.** Supersedes parts of the two below
 - `PRD.md` — product logic, especially §5 (the two-axis model)
 - `TECHNICAL_SPEC.md` — architecture, Jev integration, build order
-- `FINDINGS.md` — **what measurement changed.** Supersedes parts of both above
 - `TASKS.md` — the plan and current progress
 - `CLAUDE.md` — the rule set, including the hard invariants
 

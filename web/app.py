@@ -583,10 +583,20 @@ def page(store: ThreadStore, pipeline: Pipeline, offline: bool = False) -> tuple
     )
 
 
-def build(offline: bool = False):
+def build(offline: bool = False, public: bool = False):
     store = ThreadStore.load()
     pipeline = Pipeline(store)
     limiter = RateLimiter()
+    # /rubric is the expensive route — ~$0.027 a click against /test's $0.000034
+    # — and spec 9 did not know it existed. Limited always, not just when
+    # exposed: an accidental double-click costs money on a laptop too.
+    rejudge_limiter = RateLimiter(
+        per_minute=config.REJUDGE_PER_IP_PER_MINUTE,
+        total_cap=config.REJUDGE_TOTAL_CAP,
+    )
+    # The drip slider is the largest exposure: free to move, and it sets the
+    # burn rate. Clamped when the wall is reachable by strangers.
+    drip_ceiling = config.DRIP_RATE_MAX_PUBLIC if public else config.DRIP_RATE_MAX
 
     if offline:
         # Swap the client, then drop every comment we have no recorded verdict
@@ -732,8 +742,9 @@ def build(offline: bool = False):
         )
 
     @rt("/rubric")
-    async def rubric(axis: str, question: str, level0: str = "", level1: str = "",
-                     level2: str = "", level3: str = "", level4: str = ""):
+    async def rubric(request, axis: str, question: str, level0: str = "",
+                     level1: str = "", level2: str = "", level3: str = "",
+                     level4: str = ""):
         """Rewrite one axis and re-judge the backlog. Spec §6.
 
         One axis at a time, because `FINDINGS.md` §11 found the winning levels
@@ -751,6 +762,9 @@ def build(offline: bool = False):
                 "there is nothing to ask. Restart without --offline.",
                 id="rubric-report", cls="rubric-report",
             )
+        client = request.client.host if request.client else "unknown"
+        if refusal := rejudge_limiter.check(client):
+            return Div(refusal, id="rubric-report", cls="rubric-report")
         levels = [line.strip() for line in levels if line.strip()]
         if len(levels) < 2 or not question.strip():
             return Div(
@@ -808,7 +822,7 @@ def build(offline: bool = False):
         recompute. Editing *rubric wording* is the expensive one and lives
         elsewhere; thresholds are free.
         """
-        pipeline.replay.rate = max(1.0, min(rate, config.DRIP_RATE_MAX))
+        pipeline.replay.rate = max(1.0, min(rate, drip_ceiling))
         resorted = pipeline.retune(
             Policy(gate=Gate(gate), floor=floor, severity=severity)
         )
@@ -849,6 +863,11 @@ def build(offline: bool = False):
             "api_errors": stats.errors,
             "sockets": len(sockets),
             "render_task": "running" if tasks.get("render") else "not started",
+            "offline": offline,
+            "public": public,
+            "drip_ceiling": drip_ceiling,
+            "test_budget_left": limiter.remaining,
+            "rejudge_budget_left": rejudge_limiter.remaining,
             "last_error": next(
                 (v.error for v in reversed(pipeline.backlog.recent(200)) if v.error), None
             ),
@@ -863,10 +882,20 @@ if __name__ == "__main__":
         "--offline", action="store_true",
         help="replay recorded verdicts: no key, no credits, no network",
     )
+    parser.add_argument(
+        "--public", action="store_true",
+        help="reachable by strangers (tunnel, ngrok): clamp the drip ceiling",
+    )
     args = parser.parse_args()
 
     if args.offline:
         print("  offline — replaying recorded verdicts, no model calls")
+    if args.public:
+        print(f"  public — drip clamped to {config.DRIP_RATE_MAX_PUBLIC}/s")
+    if args.public and not args.offline:
+        # Spec §9's warning, sharpened by FINDINGS §19: the exposure is not one
+        # expensive route, it is a slider that sets the burn rate.
+        print("  NOTE: --public --offline costs nothing at all and looks identical")
 
     # Built here rather than at import time. `build()` constructs a
     # `JudgeClient`, which needs TYPESAFE_API_KEY, and tests that import this
@@ -875,7 +904,7 @@ if __name__ == "__main__":
     # 5001 is the documented demo port; PORT overrides it so a stray process
     # holding 5001 does not block a run.
     uvicorn.run(
-        build(offline=args.offline),
+        build(offline=args.offline, public=args.public),
         host="127.0.0.1",
         port=int(os.environ.get("PORT", 5001)),
         log_level="warning",
