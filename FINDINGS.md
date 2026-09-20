@@ -52,20 +52,46 @@ the decision."
 At B=15, when the question is about comment 7, the other fourteen comments in
 the state are exactly that unrelated content.
 
-Tested head to head at B=15, same rubric:
-
-| | mean conf | mean min-conf | hostility recall | lane agreement |
-|---|---|---|---|---|
-| index | 0.609 | 0.259 | 0.37 | 0.763 |
-| **quoted** | **0.626** | **0.284** | **0.43** | **0.793** |
-
 `quoted` puts the comment text in its own question and leaves the state holding
 only the thread context. Nothing has to be located, and no other comment is
-present to distract. It won on every measure, and it does **not** cost
-throughput — still 15 comments per request. It costs about 45% more tokens, and
-we are request-limited, not token-limited.
+present to distract. It does **not** cost throughput — still 15 comments per
+request. It costs about 45% more tokens, and we are request-limited.
 
-**Decision:** `ADDRESSING = "quoted"`.
+Tested head to head at B=15. Paired per-comment deltas, v2 rubric, index →
+quoted:
+
+| axis | confidence delta | |
+|---|---|---|
+| `on_topic` | **+0.140 ± 0.012** | *** |
+| `substance` | **+0.031 ± 0.011** | * |
+| `hostility` | −0.012 ± 0.011 | ns |
+| `contempt` | +0.015 ± 0.013 | ns |
+
+**The gain is entirely on the two axes that need thread context**, which is
+what the context-rot mechanism predicts: clearing fourteen irrelevant comments
+out of the state helps the questions that have to look at the state, and does
+nothing for the two axes that are intrinsic to the comment's own text. That is
+a mechanism rather than a correlation, and it is the strongest result in this
+document.
+
+**The two factors interact**, which only the paired view shows. Under the v1
+rubric, `quoted` does nothing for `on_topic` (+0.004 ± 0.015, ns); under v2 it
+is worth +0.140. The reading: v1's `on_topic` levels are ambiguous enough that
+the question cannot be answered confidently no matter how clean the state is, so
+removing distractors buys nothing. Fix the levels and the state quality starts
+to matter. **Rubric quality gates whether anything else you do to the request
+shape has an effect** — which is an argument for fixing rubrics first.
+
+`substance` is the one axis `quoted` helps regardless of rubric (+0.033 and
++0.031), so that part is robust.
+
+Accuracy also moved in `quoted`'s favour but only weakly — pooled across both
+rubrics, the arms disagree on 24 comments and `quoted` is right on 16 of them
+(one-sided p ≈ 0.08). Directionally consistent in both rubrics, not
+significant on its own.
+
+**Decision:** `ADDRESSING = "quoted"` — on the confidence result, not the
+accuracy one.
 
 ## 3. The rubric was the real constraint, not the model
 
@@ -79,16 +105,35 @@ state, the question measures more than one thing, the state doesn't say enough �
 and give one instruction: **describe situations, not degrees**. The v1 rubric
 committed two of the three sins.
 
-Rewriting every level as a situation (v2, now in `judge/rubric.py`):
+Rewriting every level as a situation (v2, now in `judge/rubric.py`) is a
+**trade, not an improvement**, and the first version of this section said
+otherwise. Paired per-comment deltas, quoted addressing, v1 → v2:
 
-| | hostility recall | on_topic confidence | lane agreement |
-|---|---|---|---|
-| v1 / quoted | 0.43 | 0.335 | 0.793 |
-| **v2 / quoted** | **0.57** | **0.500** | **0.800** |
+| axis | confidence delta | |
+|---|---|---|
+| `on_topic` | **+0.165 ± 0.012** | *** |
+| `hostility` | **−0.083 ± 0.016** | *** |
+| `contempt` | −0.018 ± 0.021 | ns |
+| `substance` | −0.020 ± 0.014 | ns |
 
-Recall improved by a third. Hostility precision fell from 0.85 to 0.74, which is
-the trade — v2 reaches further and is wrong more often when it does. For a
-product whose uncertain cases go to a human, that is the right direction.
+Much better on `on_topic`, significantly *worse* on `hostility`. Mean confidence
+rose (0.626 → 0.637) only because the first outweighs the second.
+
+**Accuracy did not change.** Of the 23 comments where the two rubrics disagree,
+v1 is right on 11 and v2 on 12. A coin flip. The headline this section used to
+carry — recall 0.43 → 0.57 — is a real number but it describes v2 sitting at a
+*more aggressive operating point*, not judging better: precision fell 0.85 →
+0.74 in exchange. Discrimination is unchanged.
+
+So the three rubric rules below are supported by the **confidence** result, on
+the axis whose v1 levels were worst, and not by an accuracy result. That is
+still the right kind of evidence — confidence on a Score *is* probability
+concentration, which is exactly what level overlap destroys — but it is a
+narrower claim than "the rewrite made it better".
+
+**Open:** v2's `hostility` levels are worse than v1's and nothing has been done
+about it. The obvious next move is a per-axis rubric rather than a wholesale
+version bump — keep v1's hostility, take v2's on_topic. Nothing tests that yet.
 
 ## 4. `min()` over four axes is what emptied the demo, not the floor
 
@@ -171,6 +216,24 @@ context**, or it is measuring the dataset's missing fields.
 - **The 6% lane wobble from batching** has not been characterised beyond the
   aggregate.
 - **Live rubric editing has not been tested at all.** v2 took several minutes of
-  careful writing to beat v1 on recall while losing precision; a viewer editing a
-  level mid-demo may well make it worse, and the demo should probably be honest
-  that this is what tuning looks like.
+  careful writing and came out a lateral move — better on one axis, worse on
+  another, accuracy unchanged. A viewer editing a level mid-demo will very
+  plausibly make it worse, and the demo should be honest that this is what
+  tuning actually looks like.
+
+- **Arms ran one run each, sequentially.** There is no within-arm variance
+  estimate; the noise-floor control is doing that work by proxy, and any API
+  drift during the run is confounded with the arm order. Interleave if any of
+  these contrasts start carrying real weight.
+
+## 8. A methodological note worth keeping
+
+The rubric result was reported as a win for about an hour because the aggregate
+rates moved in the right direction — mean confidence up, recall up, lane
+agreement up 0.793 → 0.800. Every one of those was true. The last one is two
+comments out of 300.
+
+Paired per-comment tests were available the whole time, because all four arms
+scored the same corpus in the same order. **Compare arms pairwise, not by their
+aggregate rates.** Rates this close are one or two comments wide, and the
+direction of a rate says nothing about whether the arms actually disagree.

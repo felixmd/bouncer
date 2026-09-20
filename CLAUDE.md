@@ -87,7 +87,11 @@ Confidence on a Score *is* the concentration of probability across levels. Overl
 2. **One situation per level.** No level containing "X, or Y".
 3. **One thing per question.**
 
-Rewriting the rubric to these rules moved hostility recall from 0.43 to 0.57. A rubric problem masquerades as a model problem — when the Pen floods, check per-axis confidence before touching the floor.
+Evidence: rewriting the `on_topic` levels to these rules moved its confidence **+0.165 ± 0.012** (paired, n=300). It did **not** improve accuracy — the rewrite was a wash on which comments got called correctly — and it made `hostility` confidence *worse* by 0.083, because v1's hostility levels were already close to situational. So: apply the rules **per axis**, judged on that axis's confidence, not as a wholesale rubric version bump.
+
+A rubric problem masquerades as a model problem — when the Pen floods, check per-axis confidence before touching the floor.
+
+**Measure arms pairwise, never by aggregate rates.** All arms score the same corpus in the same order, so per-comment comparison is always available. A lane-agreement move of 0.793 → 0.800 is two comments out of 300; it once got reported as a win.
 
 ## Before building any UI
 
