@@ -55,12 +55,15 @@ Nothing after this phase can be tuned honestly without it. `on_topic` and
 a documented cause of low confidence and is currently dragging the whole
 calibration curve down.
 
-- [ ] **1.1 `feed/reddit_fetch.py`** — dev-time fetch to `data/threads/<slug>.json`
-  - `sort=controversial`; keep the per-comment `controversiality` field
-  - descriptive User-Agent (Reddit blocks `python-requests/2.x` outright)
-  - **hash usernames at fetch time** to a stable display name — invariant 8
-  - one level of parent context per comment as `parent_snippet` — spec §3.3
-  - stored format per spec §5.2
+- [~] **1.1 `feed/reddit_fetch.py`** — written and unit-tested; **blocked on Reddit credentials**
+  - [x] `sort=controversial`; keeps the per-comment `controversiality` field
+  - [x] descriptive User-Agent — necessary, and no longer sufficient
+  - [x] **usernames hashed at fetch time**, salted per thread, collision-free — invariant 8
+  - [x] **`u/handle` mentions inside bodies scrubbed through the same map.** Found by a test: hashing the `author` field alone still leaks handles that people type at each other in the text
+  - [x] one level of parent context as `parent_snippet`; a removed parent passes the grandparent rather than inventing context — spec §3.3
+  - [x] stored format per spec §5.2; real comment ids deliberately not stored
+  - [x] 19 keyless tests over the tree walk, hashing and URL forms
+  - [ ] **BLOCKED:** Reddit 403s unauthenticated `.json` from this network — IP-level, not User-Agent. Spec §5.1's "OAuth is over-engineering" is now false and has been corrected. App-only OAuth is implemented and the token endpoint is reachable (401 not 403 with dummy credentials), so this needs a *script* app at `reddit.com/prefs/apps` and `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` in `.env`
   - *Done when:* one thread on disk, schema matches §5.2, no real handle anywhere in the file
 - [ ] **1.2 Fetch 3–5 threads and eyeball the pile**
   - r/AmItheAsshole, r/unpopularopinion, r/relationship_advice, r/politics, r/news
@@ -181,6 +184,11 @@ if it works.
 
 ## Open questions for a human
 
+- **Reddit credentials — blocking 1.1 and therefore all of Phase 1.** Someone
+  needs to create a script app at <https://www.reddit.com/prefs/apps> and put
+  the id and secret in `.env`. Two minutes, and nothing downstream moves without
+  it. The alternative is running the fetch once from an unblocked network and
+  committing the JSON.
 - **1.2 / 2.3 are judgement calls, not code.** Someone has to read the pile and
   say whether the Pen is interesting. Worth deciding now who does that.
 - **Does the demo ship with one thread or several?** Several is more convincing

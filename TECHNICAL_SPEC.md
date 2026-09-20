@@ -257,9 +257,16 @@ should sit near level boundaries, which 6.0/10 (level 2.4 of 0–4) roughly does
 - Use `sort=controversial` on the comments endpoint. Popularity and contentiousness are nearly uncorrelated on Reddit — the top post on r/all is usually a photo with a friendly comment section.
 - Filter on the per-comment `controversiality` field where useful.
 - Good source subs: r/AmItheAsshole, r/unpopularopinion, r/relationship_advice, r/politics, r/news.
-- **Set a descriptive User-Agent.** Reddit blocks `python-requests/2.x` regardless of origin IP.
+- **Set a descriptive User-Agent.** Reddit blocks `python-requests/2.x` regardless of origin IP. Necessary, but no longer sufficient — see below.
 - **Hash usernames at fetch time.** Never store or display real handles — the app labels comments "toxic," and that should not be attached to a real person. Hash to a stable display name so thread structure stays legible.
-- Unauthenticated `.json` endpoints are fine at this volume (a script run a few dozen times, from a laptop). OAuth is over-engineering here.
+- **Scrub `u/handle` mentions inside comment bodies too.** Hashing the `author` field misses the handle people type at each other in the text, and that string lands on screen under the word "toxic" just the same. Route mentions through the same hash map so one person reads consistently.
+- ~~Unauthenticated `.json` endpoints are fine at this volume. OAuth is over-engineering here.~~ — **false as of 2026-09-19.** Reddit serves 403 to `www.reddit.com/....json` from this network regardless of User-Agent (a browser UA gets the same 403), and `old.reddit.com` redirects to `/login/?reason=lor2`. It is an IP-level block.
+
+  App-only OAuth does work — the token endpoint returns 401 rather than 403 for bad credentials, so it is reachable. Create a *script* app at `reddit.com/prefs/apps` and set `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`. `feed/reddit_fetch.py` uses them when present and falls back to the public endpoint when not.
+
+  Worth noting what this validates: PRD §7 lists "Reddit unreachable at showtime" as a risk and pre-baked JSON as the mitigation. The risk arrived, during development rather than on stage, and the mitigation is exactly right.
+
+**Hashing is not anonymisation.** Bodies are stored verbatim, so anyone holding a thread file can find the original by searching the text. What it buys is that the app never puts a real handle next to a toxicity label — which is the risk PRD §7 actually names. Real comment ids are deliberately not stored, since they are a direct lookup back to the author. Keep these files out of public repos.
 
 ### 5.2 Stored format
 
