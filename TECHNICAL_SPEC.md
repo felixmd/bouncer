@@ -72,7 +72,15 @@ per sec  = 20 × 2,400        ≈ 48,000 tokens/sec   (19% of the 250K ceiling)
 
 Context limit is ~64K for state plus all questions **[verify]** — a 2,400-token request is nowhere near it. **You are request-limited, not token-limited.** Push B up until accuracy degrades, not until tokens run out.
 
-Concurrency needed to sustain 20 req/s at 200ms latency is only ~4 in flight; at 500ms, ~10. A semaphore of 32 is ample. **Rate-limit explicitly with a token bucket** — do not rely on the semaphore to hold you under 20/s, because when latency drops you will blow through it and start collecting 429s.
+Concurrency needed to sustain 20 req/s at 200ms latency is only ~4 in flight; at 500ms, ~10. ~~A semaphore of 32 is ample.~~ **Rate-limit explicitly with a token bucket** — do not rely on the semaphore to hold you under 20/s, because when latency drops you will blow through it and start collecting 429s.
+
+> **Measured, and §3.1 is wrong in three places — see `FINDINGS.md` §16.**
+>
+> - **Token budget *is* the binding constraint.** A request is ~12,000 tokens, not 2,400, because every question restates the whole rubric — ~1,400 tokens of level descriptions per comment against a ~150-token comment. At ~800 tokens/comment the 250K/sec ceiling caps throughput near 300 items/sec, within noise of the request ceiling. **Raising B buys nothing**, because tokens scale with comments.
+> - **32 concurrent is harmful, not ample.** 8 workers: 225/s with 3 errors. 24 workers: 245/s with 44 errors and 3× the p95 latency. And since a failed request pens fifteen comments, concurrency pressure turned the Pen from 14% to 22% — the extra being *failures wearing the costume of uncertainty*, which is the one thing this demo cannot afford.
+> - **The bucket's capacity matters as much as its rate.** Capacity 20 at rate 20 averaged 16 req/s and still collected 41 rate-limit errors, because a capacity equal to the per-second rate lets a whole second of requests leave at once. Now rate 18, capacity 4.
+>
+> Delivered: **225 items/sec sustained**, against the PRD's 200/sec target.
 
 ### 3.2 The batch-size experiment — **run, see `FINDINGS.md` §1**
 

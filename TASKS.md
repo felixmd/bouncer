@@ -14,9 +14,16 @@ not done until someone has read the number.
 
 ## Where things stand
 
-**The judge works end to end on real data.** On a 1,562-comment Hacker News
-thread: Approved 79%, Bounced 1%, Pen 20%, at ~$0.038 per 1,000 comments and
-p50 latency well inside budget. There is still no UI.
+**The pipeline runs.** 7,456 pre-baked comments on disk, streaming through the
+judge at **225 items/sec sustained** — 82% Approved, 4% Bounced, 14% Pen, 3
+errors in 30 seconds, $0.036 per 1,000 comments, p50 latency 285 ms. That clears
+the PRD's 200/sec target. There is still no UI: Phase 4 is next.
+
+This is a capability measurement, so the overturned assumptions are part of the
+output. `FINDINGS.md` now records that the batch-size knee does not exist (§1),
+that the rubric mattered more than the model (§11), that the gate was measuring
+the wrong quantity (§13), and that the throughput story in the spec was wrong in
+three separate places (§16).
 
 Throughput, cost, latency and batch size were never the risk — see `FINDINGS.md`
 §1 and §6. Pen volume was, and three measured changes fixed it: per-axis rubric
@@ -126,19 +133,19 @@ building the thing that displays them.
 
 ## Phase 3 — streaming pipeline
 
-First point where the shape of the running system exists. Verify against a
-printed console stream before any HTML.
-
-- [ ] **3.1 `feed/replay.py`** — read `data/threads/*.json`, emit at a configurable drip rate, loop forever
-  - Reddit is never called here — invariant 5
-- [ ] **3.2 `judge/batcher.py`** — group into `BATCH_SIZE` batches **from the same thread**
-  - shared state only amortises within a thread
-- [ ] **3.3 Wire the pipeline** — `replay → in_queue → batcher → workers → out_queue`
-  - *Done when:* a console stream prints lane + fingerprint at the target rate with no 429s
-- [ ] **3.4 Backlog cache** — keep the last ~2,000 comments' raw text in memory
-  - live rubric editing must never touch disk — spec §6
-- [ ] **3.5 Sustained-throughput check** — is 300/sec real over five minutes, not just in a burst?
-  - *Done when:* a number measured from the demo machine, on the demo network
+- [x] **3.1 `feed/replay.py`** — `ThreadStore` + drip reader, loops forever, bounded queue for backpressure
+  - fixed a starvation bug: at rate 0 the reader never yielded, because `Queue.put` returns without suspending while there is room. It hung the test suite; it would have hung the demo
+- [x] **3.2 `judge/batcher.py`** — same-thread batches, flushed on size **or** a 0.4s timer
+  - without the timer the demo freezes at low drip rates; age is tracked per thread so a quiet thread is not held hostage by a busy one
+- [x] **3.3 Pipeline wired and verified on a console stream** — `judge/pipeline.py`
+  - **225 items/sec sustained, 3 errors in 30s**, $0.036 per 1,000 comments
+  - workers never touch the consumer; the console drains `out_queue` on the same 12Hz tick the browser will, so invariant 1's shape is exercised before any HTML exists
+- [x] **3.4 Backlog** — last 2,000 verdicts in memory; raw text already in `ThreadStore`, so a rubric edit never touches disk
+- [x] **3.5 Sustained-throughput check** — `FINDINGS.md` §16, and it overturned three spec assumptions
+  - token-limited *and* request-limited, both binding near 300/s. **Raising B buys nothing**
+  - 8 workers beats 24: same throughput, 15× fewer 429s, 3× better p95
+  - bucket *capacity* matters as much as rate
+  - **errors must be counted separately from the Pen.** Concurrency pressure turned a 14% Pen into 22%, the extra being failures rather than uncertainty — invisible unless counted
 
 ## Phase 4 — the web shell
 

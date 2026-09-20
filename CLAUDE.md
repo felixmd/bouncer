@@ -6,6 +6,8 @@
 
 The Pen is the point of the demo. Throughput and cost are secondary. When a design decision trades off Pen legibility against anything else, Pen wins.
 
+**This is a capability measurement, not a sales demo.** The object is to find out how far this paradigm carries a real problem. A limitation found and characterised is a result, not a failure — if the POC does not work because of what the model can or cannot do, *that is the headline*, and it is worth more than a staged success. So: measure before claiming, report negative results as prominently as positive ones, and never tune the data or the thresholds to make a lane look busier than the model earned. `FINDINGS.md` is the deliverable as much as the app is.
+
 See `PRD.md` for product logic, `TECHNICAL_SPEC.md` for architecture, and **`FINDINGS.md` for what measurement changed** — it supersedes parts of both. This file is the rule set.
 
 ## Commands
@@ -73,7 +75,13 @@ Do not violate these without asking. Each one exists because breaking it kills t
 - Latency 70–500ms from US West Coast; measured **p50 169ms** from this laptop.
 - Import is `typesafe_sdk`, not `typesafe`. Client kwarg is `retry=`, not `retry_policy=`.
 
-**You are request-limited, not token-limited.** 20 req/s means batching is mandatory — one comment per request caps throughput at 20 items/sec. Use a token bucket to hold under 20/s explicitly; do not rely on the semaphore, because when latency drops you will blow through and collect 429s.
+~~**You are request-limited, not token-limited.**~~ **Measured: you are both, at once.** Batching is still mandatory — one comment per request caps you at 20 items/sec. But a request is ~12,000 tokens, not the 2,400 the spec estimated, because every question restates the whole rubric. At ~800 tokens/comment the 250K/sec ceiling and the 20 req/s ceiling both bind near 300 items/sec, so **raising B buys nothing.** See `FINDINGS.md` §16.
+
+Three pipeline settings that are not obvious and were each found the hard way:
+
+- **Use a token bucket, and keep its capacity small.** Capacity 20 at rate 20 averaged 16 req/s and still collected 41 rate-limit errors — a capacity equal to the per-second rate lets a whole second of requests leave in one instant. Now rate 18, capacity 4.
+- **8 workers, not 32.** 24 workers gained 9% throughput and multiplied 429s fifteenfold.
+- **Count errors separately from the Pen, always.** A failed request pens fifteen comments by design, so concurrency pressure quietly turned a 14% Pen into a 22% one where the extra was failures. A Pen full of errors is indistinguishable from a Pen full of hard cases and is worthless.
 
 Use **Score**, not Noul, for the four axes. Nouls pile up at the extremes; Scores spread into a usable distribution. Confirmed — scores hit the rails only 25% of the time.
 

@@ -21,9 +21,35 @@ MAX_RETRIES = 3
 
 # Published limit is 1,200 req/min. Hold under it with an explicit token
 # bucket — the semaphore alone will overshoot when latency drops.
-REQUESTS_PER_SECOND = 20.0
-TOKEN_BUCKET_CAPACITY = 20
+#
+# **Capacity matters as much as rate, and it is the part that is easy to get
+# wrong.** A capacity equal to the per-second rate lets a full second of
+# requests leave in one instant. Measured: at rate 20 / capacity 20 the
+# pipeline averaged 16 req/s — comfortably under budget — and still collected
+# 41 rate-limit errors in 25 seconds, because the server sees the burst, not
+# the average. A small capacity paces requests out evenly instead.
+#
+# The rate carries 10% headroom under the published 20/s for the same reason.
+REQUESTS_PER_SECOND = 18.0
+TOKEN_BUCKET_CAPACITY = 4
+
+# Bounds memory and sockets. It is deliberately *not* the rate limiter — at
+# 300ms latency a semaphore of 32 would happily issue 100 req/s.
 MAX_CONCURRENT_REQUESTS = 32
+
+# How many requests are actually in flight, since one worker holds one request.
+# TECHNICAL_SPEC §3.1 reasoned that ~10 would sustain 20 req/s and that "a
+# semaphore of 32 is ample". Ample is not the risk — measured over 30 seconds:
+#
+#   workers   throughput   429s   p95 latency
+#         8       225/s       3        1,291ms
+#        24       245/s      44        3,542ms
+#
+# More concurrency buys no throughput and costs errors, because the ceiling is
+# elsewhere (see the token note below). Worse, every failed request pens 15
+# comments, so the Pen filled with failures rather than uncertainty — 22%
+# against 14% — which is the one thing this demo cannot afford.
+PIPELINE_WORKERS = 8
 
 # --- Batching --------------------------------------------------------------
 
@@ -106,9 +132,41 @@ RENDER_TICK_HZ = 12  # fixed tick; never one WS frame per classification
 MAX_VISIBLE_CARDS = 150  # hard DOM cap, evict from the tail
 REJUDGE_WINDOW = 800  # backlog re-scored on a rubric edit (§6)
 
-# --- Cost ------------------------------------------------------------------
+# A partial batch is flushed after this long rather than waiting for B comments.
+# Without it the pipeline stalls whenever the drip rate is low: at 5 items/sec a
+# batch of 15 takes three seconds to fill, and the demo looks frozen.
+BATCH_TIMEOUT_S = 0.4
+
+# Bounded so that a drip rate above what the workers can clear applies
+# backpressure to the replay reader instead of growing a queue until the
+# process dies. Sized for roughly a second of traffic at full rate.
+IN_QUEUE_MAX = 400
+OUT_QUEUE_MAX = 2000
+
+# Judged comments kept in memory for the rubric-edit re-sort (§6). Raw text
+# lives in the ThreadStore, so this holds verdicts only.
+BACKLOG_SIZE = 2000
+
+# --- Cost and the real throughput ceiling ----------------------------------
 
 INPUT_COST_PER_MTOK = 0.042  # output is free
+TOKENS_PER_SECOND_CEILING = 250_000  # published
+
+# **We are token-limited, not request-limited** — the opposite of what
+# TECHNICAL_SPEC §3.1 concluded, and the reason throughput plateaus at ~240/s
+# however many workers are added.
+#
+# The spec estimated 2,400 tokens per request (300 of context plus 15 x 140).
+# Measured at B=15 it is ~12,000, because each comment carries four questions
+# and each question restates the full rubric — roughly 1,400 tokens of level
+# descriptions per comment, dwarfing the comment itself. At ~800 tokens per
+# comment the 250K/sec ceiling caps throughput near 300 items/sec, which is
+# within noise of the 20 req/s x B=15 request ceiling. Both bind at once, so
+# raising B buys nothing.
+#
+# The lever, if more throughput is ever needed, is shorter rubric levels rather
+# than bigger batches — and that trades directly against confidence.
+INPUT_COST_PER_MTOK_NOTE = "see FINDINGS §16"
 
 # --- Paths -----------------------------------------------------------------
 

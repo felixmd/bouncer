@@ -1,0 +1,305 @@
+"""The judge pipeline, wired.
+
+    uv run --env-file .env python -m judge.pipeline            # console stream
+    uv run --env-file .env python -m judge.pipeline --rate 300 --seconds 30
+
+    replay ──> in_queue ──> batcher ──> N workers ──> out_queue ──> consumer
+     (disk)   (bounded)   (same thread)  (bucket +    (verdicts)   (12Hz tick)
+                                          semaphore)
+
+**Workers never touch the consumer.** They write verdicts to `out_queue` and
+stop; something else drains that queue on a fixed tick. That separation is
+invariant 1 and it is the whole reason this is split into two halves — coupling
+them means one WebSocket frame per classification, hundreds of DOM swaps a
+second, and a dead page inside two minutes. The console consumer below drains on
+the same 12Hz tick the browser will, so the shape is exercised before any HTML
+exists.
+"""
+
+import argparse
+import asyncio
+import contextlib
+import time
+from collections import deque
+from dataclasses import dataclass, field
+
+import config
+from feed.replay import Comment, Replay, ThreadStore
+from judge.batcher import Batcher
+from judge.client import JudgeClient
+from judge.lanes import Lane, decision_confidence, lane
+from judge.rubric import DEFAULT_RUBRIC, Rubric, normalise
+
+
+@dataclass
+class Verdict:
+    comment: Comment
+    lane: Lane
+    scores: dict[str, float] = field(default_factory=dict)
+    confidences: dict[str, float] = field(default_factory=dict)
+    probabilities: dict[str, dict[int, float]] = field(default_factory=dict)
+    gate_confidence: float = 0.0
+    error: str | None = None
+
+    @property
+    def least_sure_axis(self) -> str | None:
+        """Which axis put this in the Pen. The Pen is unreadable without it."""
+        if not self.confidences:
+            return None
+        return min(self.confidences, key=lambda axis: self.confidences[axis])
+
+
+class Backlog:
+    """The last N verdicts, for the rubric-edit re-sort (spec §6).
+
+    Verdicts only — raw text already lives in the `ThreadStore`, so re-judging
+    never touches disk.
+    """
+
+    def __init__(self, size: int = config.BACKLOG_SIZE) -> None:
+        self._items: deque[Verdict] = deque(maxlen=size)
+
+    def add(self, verdict: Verdict) -> None:
+        self._items.append(verdict)
+
+    def recent(self, count: int) -> list[Verdict]:
+        return list(self._items)[-count:]
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+
+@dataclass
+class Counters:
+    judged: int = 0
+    errored: int = 0
+    lanes: dict[str, int] = field(default_factory=lambda: dict.fromkeys(Lane, 0))
+    started_at: float = field(default_factory=time.monotonic)
+
+    def record(self, verdict: Verdict) -> None:
+        self.judged += 1
+        self.lanes[verdict.lane] = self.lanes.get(verdict.lane, 0) + 1
+        if verdict.error:
+            self.errored += 1
+
+    @property
+    def elapsed(self) -> float:
+        return max(time.monotonic() - self.started_at, 1e-9)
+
+    @property
+    def per_second(self) -> float:
+        return self.judged / self.elapsed
+
+
+class Pipeline:
+    """Owns the queues and the tasks. Start it, drain `out_queue`, stop it."""
+
+    def __init__(
+        self,
+        store: ThreadStore,
+        rubric: Rubric = DEFAULT_RUBRIC,
+        rate: float = config.DRIP_RATE_PER_SECOND,
+        workers: int = config.PIPELINE_WORKERS,
+    ) -> None:
+        self.store = store
+        self.rubric = rubric
+        self.replay = Replay(store, rate=rate)
+        self.batcher = Batcher()
+        self.client = JudgeClient()
+        self.in_queue: asyncio.Queue[Comment] = asyncio.Queue(config.IN_QUEUE_MAX)
+        self.out_queue: asyncio.Queue[Verdict] = asyncio.Queue(config.OUT_QUEUE_MAX)
+        self.backlog = Backlog()
+        self.counters = Counters()
+        self._worker_count = workers
+        self._tasks: list[asyncio.Task] = []
+        self._batch_queue: asyncio.Queue[list[Comment]] = asyncio.Queue(config.IN_QUEUE_MAX)
+
+    # --- the three stages --------------------------------------------------
+
+    async def _feed_batches(self) -> None:
+        async for batch in self.batcher.batches_from(self.in_queue):
+            await self._batch_queue.put(batch)
+
+    async def _worker(self) -> None:
+        while True:
+            batch = await self._batch_queue.get()
+            for verdict in await self.judge(batch):
+                self.backlog.add(verdict)
+                await self.out_queue.put(verdict)
+
+    async def judge(self, batch: list[Comment]) -> list[Verdict]:
+        """One request, one batch. Also used by the rubric-edit re-sort."""
+        thread = self.store.by_id[batch[0].thread_id]
+        questions: dict = {}
+        for comment in batch:
+            questions |= self.rubric.questions_for(
+                comment.id, comment.body, comment.parent_snippet
+            )
+
+        response, _, error = await self.client.ask(thread.state(), questions)
+        if response is None:
+            # Spec §3.4: a comment we could not judge is a comment a human
+            # looks at. Degrading into the Pen is the correct failure here.
+            return [Verdict(comment=c, lane=Lane.PEN, error=error) for c in batch]
+
+        verdicts = []
+        for comment in batch:
+            scores, confidences, probabilities = {}, {}, {}
+            for axis in self.rubric.keys:
+                answer = response.scores.get(f"{comment.id}_{axis}")
+                if answer is None:
+                    break
+                scores[axis] = normalise(answer.score)
+                confidences[axis] = answer.confidence
+                probabilities[axis] = dict(answer.probabilities)
+            if len(scores) < len(self.rubric.keys):
+                verdicts.append(
+                    Verdict(comment=comment, lane=Lane.PEN, error="missing answers")
+                )
+                continue
+            verdicts.append(
+                Verdict(
+                    comment=comment,
+                    lane=lane(scores, confidences, probabilities),
+                    scores=scores,
+                    confidences=confidences,
+                    probabilities=probabilities,
+                    gate_confidence=decision_confidence(scores, probabilities),
+                )
+            )
+        return verdicts
+
+    # --- lifecycle ---------------------------------------------------------
+
+    async def start(self) -> None:
+        self._tasks = [
+            asyncio.create_task(self.replay.run(self.in_queue), name="replay"),
+            asyncio.create_task(self._feed_batches(), name="batcher"),
+            *(
+                asyncio.create_task(self._worker(), name=f"worker-{i}")
+                for i in range(self._worker_count)
+            ),
+        ]
+
+    async def stop(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        await self.client.aclose()
+
+    def drain(self) -> list[Verdict]:
+        """Everything judged since the last tick. **Never call this per
+        classification** — that is invariant 1."""
+        out = []
+        while True:
+            try:
+                out.append(self.out_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                return out
+
+
+# --- console runner: the build-order step before any HTML ------------------
+
+BAR = 10
+
+
+def _bar(value: float) -> str:
+    filled = round(value / config.SCORE_SCALE_MAX * BAR)
+    return "#" * filled + "." * (BAR - filled)
+
+
+async def _console(pipeline: Pipeline, seconds: float, show: int) -> None:
+    tick = 1.0 / config.RENDER_TICK_HZ
+    deadline = time.monotonic() + seconds
+    last_report = 0.0
+    errors: dict[str, int] = {}
+
+    await pipeline.start()
+    try:
+        while time.monotonic() < deadline:
+            await asyncio.sleep(tick)
+            batch = pipeline.drain()  # one drain per tick, not per verdict
+            for verdict in batch:
+                pipeline.counters.record(verdict)
+                if verdict.error:
+                    errors[verdict.error] = errors.get(verdict.error, 0) + 1
+
+            now = time.monotonic()
+            if now - last_report < 1.0:
+                continue
+            last_report = now
+
+            counters, stats = pipeline.counters, pipeline.client.stats
+            lanes = "  ".join(
+                f"{value.value[:4]} {counters.lanes.get(value, 0):>5}" for value in Lane
+            )
+            print(
+                f"\n[{counters.elapsed:5.1f}s] {counters.per_second:6.1f}/s  {lanes}  "
+                f"req {stats.requests:>4}  err {stats.errors}  "
+                f"${stats.cost_usd:.4f}  in_q {pipeline.in_queue.qsize():>3}  "
+                f"backlog {len(pipeline.backlog)}"
+            )
+            for verdict in batch[:show]:
+                if verdict.error:
+                    print(f"   {verdict.lane.value:<8} ERROR {verdict.error[:60]}")
+                    continue
+                bars = " ".join(_bar(verdict.scores[a]) for a in pipeline.rubric.keys)
+                head = verdict.comment.body[:46].replace("\n", " ")
+                print(f"   {verdict.lane.value:<8} {bars} {verdict.gate_confidence:.2f}  {head}")
+    finally:
+        await pipeline.stop()
+
+    counters = pipeline.counters
+    print(f"\n{'=' * 78}")
+    print(f"  judged {counters.judged} in {counters.elapsed:.1f}s "
+          f"= {counters.per_second:.1f}/sec")
+    for value in Lane:
+        n = counters.lanes.get(value, 0)
+        share = n / counters.judged if counters.judged else 0
+        print(f"  {value.value:<9} {n:>6}  ({share:.0%})")
+    print(f"  batches {pipeline.batcher.batches} "
+          f"({pipeline.batcher.partial} flushed on the timer)")
+    print(f"  requests {pipeline.client.stats.requests}, "
+          f"errors {pipeline.client.stats.errors}, "
+          f"{pipeline.client.stats.input_tokens:,} tokens, "
+          f"${pipeline.client.stats.cost_usd:.4f}")
+    if pipeline.client.stats.latencies_ms:
+        latencies = sorted(pipeline.client.stats.latencies_ms)
+        print(f"  latency p50 {latencies[len(latencies) // 2]:.0f}ms  "
+              f"p95 {latencies[int(len(latencies) * 0.95)]:.0f}ms")
+
+    tokens_per_comment = (
+        pipeline.client.stats.input_tokens / counters.judged if counters.judged else 0
+    )
+    tokens_per_second = pipeline.client.stats.input_tokens / counters.elapsed
+    print(f"  {tokens_per_comment:.0f} tokens/comment, "
+          f"{tokens_per_second:,.0f} tokens/sec "
+          f"({tokens_per_second / 250_000:.0%} of the published 250K ceiling)")
+    print(f"  {pipeline.client.stats.requests / counters.elapsed:.1f} req/sec "
+          f"of the 20/sec budget")
+    if errors:
+        print("  errors:")
+        for kind, count in sorted(errors.items(), key=lambda kv: -kv[1])[:4]:
+            print(f"    {count:>4}  {kind[:96]}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the judge pipeline to the console.")
+    parser.add_argument("--rate", type=float, default=config.DRIP_RATE_PER_SECOND)
+    parser.add_argument("--seconds", type=float, default=20.0)
+    parser.add_argument("--workers", type=int, default=config.PIPELINE_WORKERS)
+    parser.add_argument("--show", type=int, default=3, help="cards printed per second")
+    args = parser.parse_args()
+
+    store = ThreadStore.load()
+    print(store.describe())
+    print(f"drip {args.rate}/s, B={config.BATCH_SIZE}, {args.workers} workers, "
+          f"gate={config.CONFIDENCE_GATE} floor={config.CONFIDENCE_FLOOR}")
+
+    pipeline = Pipeline(store, rate=args.rate, workers=args.workers)
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(_console(pipeline, args.seconds, args.show))
+
+
+if __name__ == "__main__":
+    main()

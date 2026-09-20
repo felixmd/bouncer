@@ -576,3 +576,83 @@ decision rather than an engineering one, and there are three ways to go:
 
 Option 1 is the recommendation. Option 3 should be refused on the PRD's own
 terms.
+
+**Decided 2026-09-20: accept it.** The reasoning governs everything after this
+point. This project is a measurement of what the paradigm can do on a real
+problem, not a sales demo. A characterised limitation is a result. If the honest
+answer turns out to be "three lanes, and the red one is nearly empty because
+unambiguous abuse is rare and the model is properly unsure about everything near
+the line" — that is a more interesting finding than a busy red lane bought by
+moving a threshold, and it is the kind of thing the room should be told rather
+than shielded from.
+
+## 16. Throughput: token-limited, not request-limited
+
+The pipeline runs. 30 seconds against the live API, four threads, B=15:
+
+```
+judged 6,764 in 30.0s = 225/sec     approved 82%  bounced 4%  pen 14%
+452 requests, 3 errors, 5.9M tokens, $0.2464
+latency p50 285ms, p95 1,291ms
+```
+
+That clears the PRD's 200/sec target. Two things underneath it are the opposite
+of what `TECHNICAL_SPEC.md` §3.1 predicted.
+
+### More concurrency buys nothing and costs a great deal
+
+The spec reasoned that ~10 concurrent requests would sustain 20 req/s and that
+"a semaphore of 32 is ample". Ample was never the risk. Measured over 30
+seconds at the same drip rate:
+
+| workers | throughput | 429s | p95 latency | Pen |
+|---|---|---|---|---|
+| 8 | 225/s | **3** | **1,291 ms** | **14%** |
+| 24 | 245/s | 44 | 3,542 ms | 22% |
+
+Tripling concurrency gained 9% throughput and multiplied errors fifteenfold.
+
+The Pen column is the part that matters. Every failed request pens fifteen
+comments, by design — spec §3.4, a comment we cannot judge is a comment a human
+looks at. Under concurrency pressure that turned the Pen from 14% to 22%, and
+**the extra 8% was failures, not uncertainty**. A Pen full of errors looks
+identical to a Pen full of hard cases from the outside and is worthless. It is
+the one failure mode this demo cannot afford, and it is invisible unless you
+count errors separately.
+
+`PIPELINE_WORKERS = 8`.
+
+### The bucket's capacity matters as much as its rate
+
+Rate 20/s with capacity 20 averaged 16 req/s — comfortably under budget — and
+still collected 41 rate-limit errors in 25 seconds. A capacity equal to the
+per-second rate lets a whole second of requests leave in one instant, and the
+server sees the burst, not the average. Now rate 18 with capacity 4.
+
+That alone did not fix it, which is what pointed at concurrency.
+
+### The real ceiling is tokens
+
+Throughput plateaus near 240/s no matter what. At ~800 tokens per comment and
+~12,000 per request, 20 req/s would be 238K tokens/sec against a published
+ceiling of 250K. We measure 195K/sec sustained — 78% of it — and the bursts
+reach it.
+
+The spec estimated **2,400** tokens per request and concluded "you are
+request-limited, not token-limited". It is 5× that, because each comment
+carries four questions and **every question restates the whole rubric** —
+roughly 1,400 tokens of level descriptions per comment, dwarfing the ~150-token
+comment it is asking about.
+
+Two consequences:
+
+- **Raising B buys nothing.** Tokens scale with comments, not requests, so the
+  token ceiling moves with the batch. Both ceilings bind at once, near 300/s.
+- **The lever is shorter rubric levels**, not bigger batches — and that trades
+  directly against confidence, which §11 showed is where the demo lives. Not
+  worth spending unless throughput ever becomes the constraint, which at 225/s
+  against a 200/s target it is not.
+
+`quoted` addressing costs ~45% more tokens than index addressing (§2), so it is
+also buying its confidence win partly out of this budget. At current volumes
+that is affordable and clearly worth it.
