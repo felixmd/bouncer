@@ -31,23 +31,39 @@ class Axis:
     higher_is_worse: bool
     needs_thread_context: bool
 
-    def score_question(self, comment_id: str) -> Score:
-        """A Score question scoped to one comment inside a possibly-batched state."""
-        return Score(
-            instructions=f"For comment {comment_id}: {self.question}",
-            criteria=list(self.levels),
-        )
+    def score_question(self, comment_id: str, text: str, addressing: str) -> Score:
+        """A Score question scoped to one comment inside a batched request.
 
+        `quoted` carries the comment in the question and leaves it out of the
+        state entirely, so nothing has to be located by index and no other
+        comment is present to act as a distractor. See config.ADDRESSING.
+        """
+        if addressing == "index":
+            instructions = f"For comment {comment_id}: {self.question}"
+        else:
+            instructions = f'The comment is:\n"""\n{text}\n"""\n{self.question}'
+        return Score(instructions=instructions, criteria=list(self.levels))
+
+
+# Level descriptions name *situations*, not degrees. That is the Score docs'
+# instruction and it is not cosmetic: the first version of this rubric was a
+# degree ladder ("mildly pointed", "openly critical", "sustained abuse") and its
+# contempt level 0 read "treats disagreement as legitimate, *or* does not engage
+# with opposing views at all" — two situations in one level. Two of the three
+# documented causes of low confidence, in one rubric. Rewriting to situations
+# raised hostility recall from 0.43 to 0.57 and on_topic confidence from 0.34 to
+# 0.50 in experiments/rubric_ab.py.
 
 HOSTILITY = Axis(
     key="hostility",
     question="is it attacking a person?",
     levels=[
-        "Addresses ideas, events or the situation only. No personal remarks about anyone.",
-        "Mildly pointed at a person — a dig or a sarcastic aside, not an attack.",
-        "Openly critical of a person's character, motives or intelligence, but not abusive.",
-        "A direct personal attack: insults, name-calling, or open hostility toward someone.",
-        "Sustained abuse of a person: degrading language, or wishing harm on them.",
+        "The comment is about a topic, an event, a policy or an idea. No person is described.",
+        "The comment reports what a person did or said, without judging them for it.",
+        "The comment says a person is wrong, mistaken, hypocritical, or behaving badly.",
+        "The comment calls a person a name, mocks them, or says what kind of person they are.",
+        "The comment swears at a person, uses degrading language about them, or says they "
+        "deserve harm.",
     ],
     higher_is_worse=True,
     needs_thread_context=False,
@@ -55,13 +71,15 @@ HOSTILITY = Axis(
 
 CONTEMPT = Axis(
     key="contempt",
-    question="does it dismiss anyone who disagrees as not worth answering?",
+    question="how does it treat people who hold the opposing view?",
     levels=[
-        "Treats disagreement as legitimate, or does not engage with opposing views at all.",
-        "Confident and one-sided, but leaves room for the other view to exist.",
-        "Implies people who disagree are uninformed or have not thought it through.",
-        "States or strongly implies that opposing views are not worth engaging with.",
-        "Writes off everyone who disagrees as stupid, bad faith, or beneath response.",
+        "The comment does not refer to anyone who disagrees.",
+        "The comment answers an opposing argument on its merits.",
+        "The comment says the opposing side is wrong without saying why.",
+        "The comment says the opposing argument is not worth discussing, or refuses to engage "
+        "with it.",
+        "The comment says the people who hold the opposing view are stupid, dishonest, or "
+        "beneath replying to.",
     ],
     higher_is_worse=True,
     needs_thread_context=False,
@@ -69,13 +87,14 @@ CONTEMPT = Axis(
 
 SUBSTANCE = Axis(
     key="substance",
-    question="does it add anything to the discussion?",
+    question="what does it add to the discussion?",
     levels=[
-        "Adds nothing: a bare reaction, an agreement, a meme, or noise.",
-        "States a position with no reasoning, evidence or detail behind it.",
-        "Gives a brief reason, or one concrete detail.",
-        "Makes a clear argument with reasoning, an example, or relevant experience.",
-        "Adds substantial information, evidence, or a developed argument.",
+        "The comment is a reaction, an agreement, a joke, or a single phrase.",
+        "The comment states an opinion and stops there.",
+        "The comment states an opinion and gives one reason or one concrete detail.",
+        "The comment makes an argument with more than one step, or draws on personal "
+        "experience.",
+        "The comment introduces information, figures or sources not already in the thread.",
     ],
     higher_is_worse=False,
     needs_thread_context=True,
@@ -83,13 +102,13 @@ SUBSTANCE = Axis(
 
 ON_TOPIC = Axis(
     key="on_topic",
-    question="does it engage with what it is replying to?",
+    question="what is it responding to?",
     levels=[
-        "Unrelated to the thread and to the comment it replies to.",
-        "Loosely connected — uses the thread as a springboard for something else.",
-        "Related to the general subject but not to the specific point being made.",
-        "Engages with the thread's question, or with the parent comment's point.",
-        "Responds directly and specifically to what it is replying to.",
+        "The comment is about a different subject entirely.",
+        "The comment starts from the thread's subject and moves on to a different one.",
+        "The comment is about the thread's general subject.",
+        "The comment addresses the specific question or claim the thread is about.",
+        "The comment restates or quotes a specific point and responds to that point.",
     ],
     higher_is_worse=False,
     needs_thread_context=True,
@@ -104,9 +123,14 @@ class Rubric:
     def keys(self) -> list[str]:
         return [axis.key for axis in self.axes]
 
-    def questions_for(self, comment_id: str) -> dict[str, Score]:
+    def questions_for(
+        self, comment_id: str, text: str, addressing: str = config.ADDRESSING
+    ) -> dict[str, Score]:
         """Question set for one comment, keyed `<comment_id>_<axis>`."""
-        return {f"{comment_id}_{axis.key}": axis.score_question(comment_id) for axis in self.axes}
+        return {
+            f"{comment_id}_{axis.key}": axis.score_question(comment_id, text, addressing)
+            for axis in self.axes
+        }
 
 
 DEFAULT_RUBRIC = Rubric()

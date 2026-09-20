@@ -12,6 +12,7 @@ a human decides. The claim the demo makes is not "this model is right" — it is
 
 - `PRD.md` — product logic, especially §5 (the two-axis model)
 - `TECHNICAL_SPEC.md` — architecture, Jev integration, build order
+- `FINDINGS.md` — **what measurement changed.** Supersedes parts of both above
 - `CLAUDE.md` — the rule set, including the hard invariants
 
 ## Setup
@@ -58,7 +59,16 @@ Reddit, and the tests run against recorded fixtures by design.
 
 ## Status
 
-Scaffold only. Build order is in `TECHNICAL_SPEC.md` §10 — note that steps 1–3
-(fetch script, the batch-size-vs-accuracy experiment, the judge pipeline) come
-before any UI work, and `BATCH_SIZE` in `config.py` is deliberately unset until
-that experiment has run.
+The judge half works and is measured. No UI yet.
+
+- `judge/` — client with token bucket, the four-axis rubric, the lane policy
+- `calibrate/` — labelled-sample fetch and the threshold/gate curve
+- `experiments/` — the three runs behind `FINDINGS.md`
+
+Headline results: batching costs nothing up to B=30 (so 300 items/sec is
+comfortable), latency p50 is 169 ms, cost is ~$0.038 per 1,000 comments, and
+the confidence signal is genuinely calibrated — agreement rises monotonically
+with it. The open problem is Pen volume, and the next step is step 1 of
+`TECHNICAL_SPEC.md` §10: get a real Reddit thread on disk, because the
+calibration curve is currently being measured on a dataset with no thread
+context and `on_topic` is paying for it.

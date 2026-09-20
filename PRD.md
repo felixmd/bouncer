@@ -1,7 +1,13 @@
 # The Bouncer — Product Requirements
 
-**Status:** draft for a weekend build
+**Status:** draft for a weekend build, revised 2026-09-19 after the first round of measurement
 **Working name:** The Bouncer (alt: Velvet Rope). Not "ToxicGate" — the `-gate` suffix reads as scandal, not doorway.
+
+> The product logic below survived contact with the API essentially intact — the
+> two-axis model in §5 is right, and calibrated confidence does behave the way
+> the demo needs. Two things changed: §5.2 gained a hard constraint on how
+> rubrics must be written, and §6's numeric targets need re-reading against
+> `FINDINGS.md`.
 
 ---
 
@@ -85,6 +91,36 @@ Per comment, ask four **Score** questions in a single call (Jev fans questions o
 
 **Not mutually exclusive.** A comment can be hostile *and* unhelpful. "Healthy" is the absence of the others, not a peer category. Lanes are computed in Python from the four scores plus confidence, never chosen by the model.
 
+### 5.2.1 How the rubric levels must be written
+
+Measured, and it is the highest-leverage decision in the build. See
+`FINDINGS.md` §3.
+
+Jev's confidence on a Score *is* the concentration of its probability across the
+levels. If two levels could both describe the same comment, probability splits
+between them, confidence falls, and the comment goes to the Pen — not because
+the model is uncertain about the comment, but because the rubric is ambiguous
+about the question. **A badly written rubric looks exactly like a hard corpus.**
+
+Three rules, from the docs and confirmed here:
+
+1. **Describe situations, not degrees.** "The comment calls a person a name,
+   mocks them, or says what kind of person they are" beats "openly critical,
+   but not abusive." The first names a thing that either happened or did not.
+2. **One situation per level.** The first version of the contempt axis had a
+   level reading "treats disagreement as legitimate, *or* does not engage with
+   opposing views at all" — two unrelated situations, and contempt was the
+   least confident axis in the first run.
+3. **One thing per question.** An axis asking about target *and* intensity *and*
+   manner at once splits probability three ways.
+
+Rewriting the rubric to these rules raised hostility recall from 0.43 to 0.57.
+
+This also sharpens the live-rubric-editing feature in §4.2: what a viewer is
+editing is not a vibe, it is the thing that determines whether the model can
+answer confidently at all. That is a better story than "type a sentence and the
+model changes its mind," and it is true.
+
 ### 5.3 Explicit non-goals
 
 Jev is a non-generative decision model trained on synthetic data for calibrated judgments. It is not a knowledge store. **Never ask it a question whose answer requires a fact not present in the state you passed it.**
@@ -103,11 +139,37 @@ Every question in the demo must be intrinsic to the text in the state.
 The demo works if:
 
 1. It is legible in eight seconds with no explanation.
-2. Throughput shown is ≥ 200 items/sec sustained.
-3. Spend counter stays visibly trivial (cents) against a five-figure volume counter.
+2. Throughput shown is ≥ 200 items/sec sustained. — **clears comfortably.** 20 req/s × B=15 = 300/sec, and batching costs no accuracy up to B=30.
+3. Spend counter stays visibly trivial (cents) against a five-figure volume counter. — **clears by a mile.** ~$0.038 per 1,000 comments. The entire investigation behind `FINDINGS.md` cost 22 cents.
 4. The Pen contains genuinely ambiguous comments — a viewer who clicks in should hesitate before choosing Allow or Bounce. If the Pen is full of obvious cases, the threshold is wrong.
 5. Editing the rubric visibly re-sorts the backlog in under three seconds.
 6. At least one person asks to try their own comment.
+
+### 6.1 The Pen-size target needs stating honestly
+
+The framing in §2 — "we auto-handle 94% and escalate 6%" — is a claim about a
+number nobody has measured on this workload, and the first measurement did not
+support it. On Civil Comments the auto-handled share at a defensible floor is
+**22%**, not 94%.
+
+Two things about that, in order of importance.
+
+**It is measured on the wrong data, and that is fixable.** Civil Comments has no
+thread structure, so the `on_topic` axis is being asked what a comment is
+replying to with nothing in the state to reply to. Its confidence there is 0.50
+against 0.86 on Reddit data with real context. `on_topic` is frequently the axis
+that pens a comment, so the number should improve once the curve is measured on
+a fetched thread. How much is unknown.
+
+**The demo should not hard-code a percentage it cannot hit.** The honest version
+is stronger anyway: put the auto-handled share on screen as a live number next
+to the threshold slider, and let a viewer move the threshold and watch the
+trade. "Here is the curve, pick your operating point" is a better trust-and-
+safety conversation than "we do 94%", and it turns criterion 4 from an assertion
+into something the room can check.
+
+If the number after step 2 of the build order is still low, that is the finding,
+and the Pen being large is only embarrassing if the demo claimed otherwise.
 
 ## 7. Risks
 
@@ -119,7 +181,10 @@ The demo works if:
 | Offensive content on a screen in front of colleagues | Bounced lane blurred by default, click to reveal |
 | Publishing real users' comments under a "toxic" label | Hash usernames at fetch time; never store or display real handles |
 | Reddit unreachable at showtime | Pre-baked JSON; Reddit is a dev-time dependency only |
-| Throughput counter disappointing on the day | Measure fan-out latency from the actual demo machine and network early |
+| Throughput counter disappointing on the day | ~~Measure fan-out latency early~~ — **retired.** p50 169ms from this laptop, 300 items/sec at B=15 |
+| Pen so large there is no Approved lane | **Live and unresolved.** `min()` over four axes penned 99% of traffic; the `decisive` gate fixes the arithmetic, but the auto-handled share is still only 22% on context-free data. Re-measure on a real thread before the demo |
+| Rubric ambiguity mistaken for model uncertainty | A level that overlaps another splits the probability and lowers confidence, which looks identical to a hard comment. Write levels as disjoint situations (§5.2.1) and watch per-axis confidence, not just the lane mix |
+| Same comment gets a different verdict on a re-run | Batching flips 6–7% of lane decisions against a near-deterministic baseline. Harmless while the stream is one-way; becomes visible the moment live rubric editing re-sorts a backlog the audience has already read |
 
 ## 8. Out of scope for v1
 

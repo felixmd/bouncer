@@ -6,17 +6,23 @@
 
 The Pen is the point of the demo. Throughput and cost are secondary. When a design decision trades off Pen legibility against anything else, Pen wins.
 
-See `PRD.md` for product logic and `TECHNICAL_SPEC.md` for architecture. This file is the rule set.
+See `PRD.md` for product logic, `TECHNICAL_SPEC.md` for architecture, and **`FINDINGS.md` for what measurement changed** — it supersedes parts of both. This file is the rule set.
 
 ## Commands
 
 ```bash
-uv sync                                           # install
-uv run --env-file .env python -m web.app          # run the demo (localhost:5001)
-uv run --env-file .env python -m calibrate.sweep  # threshold sweep against Jigsaw
-uv run python -m feed.reddit_fetch URL            # dev-time: fetch a thread to data/threads/
-uv run pytest                                     # tests
-uv run ruff check --fix .                         # lint
+uv sync                                                 # install
+uv run --env-file .env python -m web.app                # run the demo (localhost:5001)
+uv run python -m feed.reddit_fetch URL                  # dev-time: fetch a thread
+uv run python -m calibrate.fetch_jigsaw --n 300         # dev-time: labelled sample
+uv run python -m calibrate.sweep                        # threshold + gate curve (offline)
+uv run pytest                                           # tests
+uv run ruff check --fix .                               # lint
+
+# experiments — live API, see FINDINGS.md
+uv run --env-file .env python -m experiments.smoke15      # 15 hand-written comments
+uv run --env-file .env python -m experiments.batch_sweep  # B = 1..30
+uv run --env-file .env python -m experiments.rubric_ab    # rubric x addressing, 2x2
 ```
 
 `TYPESAFE_API_KEY` must be set. Never commit it, never inline it, never put it in a fixture.
@@ -32,6 +38,8 @@ Do not violate these without asking. Each one exists because breaking it kills t
 2. **Confidence is never a category.** Jev returns confidence alongside every answer. It must never appear as an option inside a Choice or a level inside a Score. Lanes are computed in Python from scores *plus* confidence as two separate axes.
 
 3. **Check the confidence gate first** in `lanes.py`. A low-confidence "clearly fine" still goes to the Pen. Short-circuiting this to reduce Pen volume guts the demo.
+
+   Refined by measurement: the gate applies the floor to the axes that **carried this comment's verdict** (`decisive`), not to `min()` of all four. `min()` of four axes pens 99% of traffic — that is arithmetic, not caution, and it left the demo with no Approved lane. Dropping the floor to compensate is the one move to avoid; the docs are explicit that it rebuilds the thing you were escaping.
 
 4. **Never ask Jev a question requiring a fact outside the state.** It is a non-generative decision model trained on synthetic data, not a knowledge store. No truth-checking, no fact-checking, no misinformation detection, no arithmetic, no dates, no counting. Compute those in Python and pass the result as prose.
 
@@ -49,25 +57,46 @@ Do not violate these without asking. Each one exists because breaking it kills t
 
 ## Jev constraints
 
-Verify all of these against `docs.typesafe.ai` before relying on them; they come from launch-window sources.
-
 - Text only. No images, no streaming, no generation.
 - Primitives: Choice (≤255 options), Score (2–10 rubric levels), Noul (0–1 probability).
-- Questions fan out in parallel against one shared state — the 4th question costs tokens but almost no time.
+- Questions fan out in parallel against one shared state — the 4th question costs tokens but almost no time. Confirmed: 120 questions in one request all come back.
 - Rate limits: 1,200 req/min (20/sec) and 250K tokens/sec.
-- Context ~64K for state + all questions.
-- $0.042/M input tokens; output free.
-- Latency 70–500ms from US West Coast.
+- Hard ceilings: **64K for state + all questions**, and **32K for state + the single longest question**.
+- $0.042/M input tokens; output free. Measured ~$0.038 per 1,000 comments at B=15.
+- Latency 70–500ms from US West Coast; measured **p50 169ms** from this laptop.
+- Import is `typesafe_sdk`, not `typesafe`. Client kwarg is `retry=`, not `retry_policy=`.
 
 **You are request-limited, not token-limited.** 20 req/s means batching is mandatory — one comment per request caps throughput at 20 items/sec. Use a token bucket to hold under 20/s explicitly; do not rely on the semaphore, because when latency drops you will blow through and collect 429s.
 
-Use **Score**, not Noul, for the four axes. Nouls pile up at the extremes; Scores spread into a usable distribution.
+Use **Score**, not Noul, for the four axes. Nouls pile up at the extremes; Scores spread into a usable distribution. Confirmed — scores hit the rails only 25% of the time.
+
+### Documented jagged edges that bite this project
+
+From `docs.typesafe.ai/model-jaggedness/jev-1.13`:
+
+- **"Cannot reliably count items, with error growing with the size of the thing being counted."** This is why we do not address comments by index inside a batch.
+- **"Accuracy falls as the state grows with content unrelated to the decision."** At B=15, the other 14 comments are unrelated content for any one question. Hence `ADDRESSING = "quoted"`.
+- **Score levels are "weak in numerical calibration."** Do not read the fractional part of a score as a magnitude. Put thresholds near level boundaries.
+- **Literal interpretation** — it answers the question you wrote, not the one you meant.
+
+## Rubric rules (highest leverage thing in the build)
+
+Confidence on a Score *is* the concentration of probability across levels. Overlapping levels split the probability and look identical to a hard comment. So:
+
+1. **Describe situations, not degrees.**
+2. **One situation per level.** No level containing "X, or Y".
+3. **One thing per question.**
+
+Rewriting the rubric to these rules moved hostility recall from 0.43 to 0.57. A rubric problem masquerades as a model problem — when the Pen floods, check per-axis confidence before touching the floor.
 
 ## Before building any UI
 
-Run the batch-size experiment in `TECHNICAL_SPEC.md` §3.2. Jev evaluates questions in isolation against a shared state, so in a batched request it must locate "comment #7" inside a 15-comment blob. Accuracy will degrade with batch size and nobody knows where the knee is. Prior guess 8–15. If it turns out to be 3, the whole throughput story changes.
+~~Run the batch-size experiment~~ — **done, see `FINDINGS.md` §1.** There is no knee: accuracy is flat from B=1 to B=30. `BATCH_SIZE = 15`, chosen for headroom under the 64K ceiling.
 
-Do not skip this and do not build around an assumed batch size.
+Two things carried forward from it:
+
+- **Any accuracy sweep must include a noise floor control.** Two identical B=1 runs differ by 0.081/10 — the model is nearly deterministic, so drift that looks small is not necessarily noise. Without that control the batch sweep would have been unreadable.
+- **Do not measure `on_topic` or `substance` on a dataset without thread context.** Civil Comments has none, which depresses `on_topic` confidence from 0.86 to 0.50 and drags the whole calibration curve down. That is the dataset, not the model.
 
 ## Conventions
 

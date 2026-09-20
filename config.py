@@ -27,10 +27,24 @@ MAX_CONCURRENT_REQUESTS = 32
 
 # --- Batching --------------------------------------------------------------
 
-# UNSET ON PURPOSE. Run the batch-size-vs-accuracy experiment in
-# TECHNICAL_SPEC §3.2 before picking a value. Prior guess is 8-15, but the
-# knee is unmeasured and the throughput story depends on it.
-BATCH_SIZE: int | None = None
+# Measured, not guessed. experiments/batch_sweep.py scored 300 labelled Civil
+# Comments at B = 1,3,5,8,12,15,20,30 and found no accuracy knee anywhere in
+# that range — agreement with human labels was 0.78 at B=1 and 0.79 at B=30.
+# 15 is chosen for headroom against the 64K state+questions ceiling (B=30 with
+# four questions each is ~120 questions in one request), not for accuracy.
+BATCH_SIZE = 15
+
+# How a question points at one comment inside a batched request.
+#   "index"   comments live in the state, the question says "for comment X".
+#   "quoted"  the state carries no comments at all; each question carries only
+#             the comment it asks about.
+# "quoted" won on every measured axis: higher confidence, higher recall, higher
+# agreement. Both jev-1.13 failure modes it avoids are documented — the model
+# "cannot reliably count items, with error growing with the size of the thing
+# being counted", and "accuracy falls as the state grows with content unrelated
+# to the decision". At B=15, thirteen of the other comments are exactly that
+# unrelated content.
+ADDRESSING = "quoted"
 
 # --- Scoring scale ---------------------------------------------------------
 
@@ -45,9 +59,24 @@ SCORE_SCALE_MAX = 10.0
 # --- Lane policy (TECHNICAL_SPEC §4) ---------------------------------------
 
 SEVERITY_THRESHOLD = 6.0  # on the normalised 0-10 scale
-CONFIDENCE_FLOOR = 0.80  # provisional; set from the Jigsaw sweep, not by taste
 LOW_SUBSTANCE_THRESHOLD = 3.0
 LOW_ON_TOPIC_THRESHOLD = 3.0
+
+# Which confidences the floor applies to. `min_all` — the original rule — takes
+# the worst of four axes and pens 99% of traffic; see judge/lanes.py for why
+# that is arithmetic rather than caution. Imported late to avoid a cycle.
+CONFIDENCE_GATE = "decisive"
+
+# From the curve in calibrate/sweep.py, not from taste. At decisive/0.85 the
+# auto-handled share agrees with the human label 94% of the time.
+#
+# Provisional, and pessimistic. The curve was measured on Civil Comments, which
+# has no thread structure, so `on_topic` was being asked what a comment is
+# replying to with nothing in the state to reply to — one of the three causes
+# of low confidence the Score docs name. Its mean confidence there was 0.50
+# against 0.86 on the Reddit smoke corpus, where real thread context exists.
+# Re-run the sweep on a fetched thread before the demo and expect this to move.
+CONFIDENCE_FLOOR = 0.85
 
 # --- Replay and render -----------------------------------------------------
 

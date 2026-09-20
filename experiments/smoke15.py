@@ -56,24 +56,28 @@ class Result:
 
 
 def build_state(comment: Comment) -> dict:
-    """Thread context once, then the comment block — the §3.3 shape at B=1."""
+    """Thread context, plus the comment only when the question will not carry it.
+
+    Under config.ADDRESSING == "quoted" the comment text travels in the
+    questions, so putting it in the state as well would just be the distractor
+    the context-rot guidance warns about.
+    """
     thread = THREADS[comment.thread_id]
-    return {
+    state = {
         "thread_title": thread.title,
         "thread_body": thread.selftext[:1200],
-        "comments": [
-            {
-                "id": comment.id,
-                "replying_to": comment.parent_snippet,
-                "text": comment.body,
-            }
-        ],
+        "replying_to": comment.parent_snippet,
     }
+    if config.ADDRESSING == "index":
+        state["comments"] = [
+            {"id": comment.id, "replying_to": comment.parent_snippet, "text": comment.body}
+        ]
+    return state
 
 
 async def judge_one(client: AsyncTypeSafeClient, comment: Comment) -> Result:
     thread = THREADS[comment.thread_id]
-    questions = DEFAULT_RUBRIC.questions_for(comment.id)
+    questions = DEFAULT_RUBRIC.questions_for(comment.id, comment.body)
     started = time.perf_counter()
 
     try:

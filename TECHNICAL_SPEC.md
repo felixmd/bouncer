@@ -2,7 +2,13 @@
 
 Companion to `PRD.md`. Read that first for the product logic, especially §5 (the two-axis model).
 
-> **Verify before building.** The Jev API details below come from launch-window documentation and community sources. You have API access — check the real docs at `docs.typesafe.ai` and confirm the SDK surface, rate limits, and response shape before building on any number in this file. Where something is unverified it is marked **[verify]**.
+> **`FINDINGS.md` supersedes parts of this document.** The experiments in §3.2
+> and §7 have now been run. Three assumptions here were wrong: the batch-size
+> knee does not exist, the request shape in §3.3 is the wrong one, and the
+> confidence gate in §4 pens 99% of traffic. Sections below are annotated where
+> measurement overtook them. The unannotated parts still stand.
+
+> **Verify before building.** The Jev API details below came from launch-window documentation and community sources. Most are now confirmed against `docs.typesafe.ai` and against live calls; remaining unverified items are marked **[verify]**.
 
 ---
 
@@ -68,22 +74,61 @@ Context limit is ~64K for state plus all questions **[verify]** — a 2,400-toke
 
 Concurrency needed to sustain 20 req/s at 200ms latency is only ~4 in flight; at 500ms, ~10. A semaphore of 32 is ample. **Rate-limit explicitly with a token bucket** — do not rely on the semaphore to hold you under 20/s, because when latency drops you will blow through it and start collecting 429s.
 
-### 3.2 The experiment to run before writing any UI
+### 3.2 The batch-size experiment — **run, see `FINDINGS.md` §1**
 
-Jev evaluates every question in isolation against the same state. In a batched request the state is 15 comments and the question is effectively "is comment #7 hostile?" — which requires the model to locate #7 first. **This will degrade with batch size and nobody knows where the knee is.**
+Done. 300 labelled Civil Comments at B = 1, 3, 5, 8, 12, 15, 20, 30, via
+`experiments/batch_sweep.py`.
 
-Measure it on day one:
+**There is no knee.** Agreement with the human label is flat across the whole
+range (0.74–0.79) and B=30 scored highest. Every one of the 120 questions in a
+B=30 request came back answered. The prior guess of 8–15 was pessimistic.
 
-1. Take ~300 labelled Jigsaw comments.
-2. Score each at B = 1, 3, 5, 8, 12, 15, 20, 30.
-3. Plot agreement-with-B=1 and mean confidence against B.
-4. Pick the largest B before either falls off.
+One thing the original design of this experiment would have missed: measuring
+drift against B=1 only tells you something if you know the noise floor. Running
+B=1 twice gives a mean score delta of **0.081/10** and lane agreement of
+**0.993** — the model is nearly deterministic. Against that, batching moves
+scores by 0.54–0.71 and flips **6–7% of lane decisions**. Real, roughly 8×
+noise, and lateral rather than degrading. Acceptable for a demo; not acceptable
+if a comment has to get the same verdict twice.
 
-Prior guess is 8–15. If it turns out to be 3, the throughput story changes and it is much better to know that on Saturday morning than Sunday night.
+**Any future sweep must include the noise floor as a control.**
 
-### 3.3 Request shape
+`BATCH_SIZE = 15`, for headroom under the 64K ceiling rather than for accuracy.
 
-State is the thread context once, then the comment block. Questions are keyed per comment.
+### 3.3 Request shape — **superseded, see `FINDINGS.md` §2**
+
+The shape below — comments in the state, questions addressing them by id — was
+measured against the alternative and lost on every metric. It walks into two
+documented `jev-1.13` failure modes at once: the model "cannot reliably count
+items, with error growing with the size of the thing being counted", and
+"accuracy falls as the state grows with content unrelated to the decision". At
+B=15, the other fourteen comments *are* that unrelated content.
+
+**Use `quoted` addressing instead.** The comment travels inside its own
+question; the state holds only thread context. Nothing has to be located,
+nothing irrelevant is present, and the batch size is unchanged — still 15
+comments per request, so throughput does not move. It costs ~45% more tokens,
+which we have, and buys higher confidence, higher recall and higher agreement.
+
+```python
+state = {
+    "thread_title": thread.title,
+    "thread_body": thread.selftext[:1200],      # empty for link posts
+    "replying_to": c.parent_snippet,
+}
+
+questions = {}
+for c in batch:
+    for axis in rubric.axes:
+        questions[f"{c.id}_{axis.key}"] = Score(
+            instructions=f'The comment is:\n"""\n{c.body}\n"""\n{axis.question}',
+            criteria=axis.levels,
+        )
+```
+
+The batch still shares one `state`, so thread context still amortises across B.
+
+<details><summary>The original index-addressed shape, kept for the record</summary>
 
 ```python
 state = {
@@ -106,26 +151,41 @@ for c in batch:
     questions[f"{c.id}_on_topic"]  = Score(...)
 ```
 
+</details>
+
 Notes:
 
 - Include **one level** of parent context per comment. "You're an idiot" as a top-level comment and as a reply to a specific claim are different objects, and `on_topic` for a deep reply means relevant to its subthread, not to the article. Two levels is diminishing returns and breaks context amortisation.
 - **Batch by thread.** All comments in a request share one `state`, so the thread context cost amortises to near zero across B comments. Batching randomly across threads would force every context into every request.
 - **Never summarise the thread.** Reddit's own title and selftext are sufficient, and generating a summary would mean bolting a second model onto a Jev demo.
 - Score levels are plain-English rubric strings, editable at runtime (see §6).
+- **Write levels as situations, not degrees**, and make sure each level names exactly one situation. This is the single highest-leverage thing in the whole pipeline — see `FINDINGS.md` §3, and §5.2 of the PRD.
 
 ### 3.4 Client
 
+Import path confirmed: the distribution is `typesafe-sdk`, the module is
+`typesafe_sdk` (not `typesafe`). The keyword is `retry`, not `retry_policy`, and
+the key is read from `TYPESAFE_API_KEY` by the SDK — never pass `api_key=` in
+source.
+
 ```python
-from typesafe import AsyncTypeSafeClient, RetryPolicy   # [verify import path]
+from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 client = AsyncTypeSafeClient(
-    api_key=os.environ["TYPESAFE_API_KEY"],
-    retry_policy=RetryPolicy(max_retries=3),
+    model=config.JEV_MODEL,
+    retry=RetryPolicy(max_retries=3),
     timeout=30,
 )
 ```
 
-Pin the model version (`jev-1.13.0` style) rather than `jev-latest`. `latest` moves, and it will move under your tuned thresholds. Log the `model` field from the response, not from config.
+`client.system_one(state, questions)` returns `.model`, `.usage` and
+`.scores[name]`, each a `ScoreAnswer` with `.score` (probability-weighted mean
+of the levels, continuous) and `.confidence` (0–1, the concentration of the
+probability distribution).
+
+Pin the model version rather than `jev-latest` — the SDK's own default *is*
+`jev-latest`, so an unset `model` silently inherits the moving target. Currently
+`jev-1.13.0`. Log the `model` field from the response, not from config.
 
 Handle 429 (rate limit, honour `retry_after`) and 529 (overloaded) with backoff. On persistent failure, mark the comment `errored` and route it to the Pen — degrading into "a human looks at it" is the right failure mode for this product and costs nothing to implement.
 
@@ -133,12 +193,36 @@ Handle 429 (rate limit, honour `retry_after`) and 529 (overloaded) with backoff.
 
 Pure function, no model involvement. This is deliberate — the model returns scores and confidence; the *policy* is yours.
 
-```python
-SEVERITY_THRESHOLD = 6.0      # on a 0-10 Score
-CONFIDENCE_FLOOR   = 0.80     # tune against Jigsaw, see §7
+Confidence gate is checked **first**. A low-confidence "clearly fine" still goes to the Pen — that is the entire point of the mechanism, and short-circuiting it to save Pen volume would gut the demo. That has not changed.
 
-def lane(scores: dict[str, float], confidences: dict[str, float]) -> Lane:
-    if min(confidences.values()) < CONFIDENCE_FLOOR:
+**What changed is which confidences the floor applies to — see `FINDINGS.md` §4.**
+
+`min()` across all four axes pens **99–100% of traffic** at any floor that is
+worth having. That is arithmetic, not caution: four axes each averaging 0.6–0.7
+confidence, take the worst every time, nothing survives. The demo has no
+Approved lane.
+
+The fix is not a lower floor — the Score docs warn specifically that if there is
+nowhere for uncertain cases to go you will lower the threshold and rebuild the
+thing you were escaping. The fix is to stop letting an axis veto a decision it
+took no part in.
+
+```python
+SEVERITY_THRESHOLD = 6.0      # on the normalised 0-10 scale
+CONFIDENCE_FLOOR   = 0.85     # from the curve in §7, not from taste
+CONFIDENCE_GATE    = "decisive"
+
+def decisive_confidence(scores, confidences) -> float:
+    # Both severity axes always: an Approved verdict claims neither crossed the
+    # line, so both have to be trusted. The quality axes only when the
+    # low-quality rule is what fired.
+    relevant = [confidences["hostility"], confidences["contempt"]]
+    if scores["substance"] <= 3.0 and scores["on_topic"] <= 3.0:
+        relevant += [confidences["substance"], confidences["on_topic"]]
+    return min(relevant)
+
+def lane(scores, confidences) -> Lane:
+    if decisive_confidence(scores, confidences) < CONFIDENCE_FLOOR:
         return Lane.PEN
     over = (
         scores["hostility"] >= SEVERITY_THRESHOLD
@@ -148,9 +232,21 @@ def lane(scores: dict[str, float], confidences: dict[str, float]) -> Lane:
     return Lane.BOUNCED if over else Lane.APPROVED
 ```
 
-Confidence gate is checked **first**. A low-confidence "clearly fine" still goes to the Pen — that is the entire point of the mechanism, and short-circuiting it to save Pen volume would gut the demo.
+`min_all` remains available as the conservative gate and both are exposed in the
+UI — the difference between them is itself worth showing.
 
-Both constants live in config and are exposed in the UI.
+All constants live in config and are exposed in the UI.
+
+### 4.1 The scoring scale
+
+`Score.criteria` is one description per level **starting at zero**, so N levels
+give raw scores in `0..N-1`. A "0–10 score" would need 11 levels against a
+documented maximum of 10. We use 5 levels and normalise onto 0–10 so the
+thresholds above keep the scale this document talks about.
+
+Note also that `jev-1.13`'s score levels are documented as "weak in numerical
+calibration" — you cannot read the fractional part as a magnitude. Thresholds
+should sit near level boundaries, which 6.0/10 (level 2.4 of 0–4) roughly does.
 
 ## 5. Data pipeline
 
@@ -206,16 +302,30 @@ On edit: rebuild the question set, re-run the retained backlog (keep the last ~2
 
 Cache raw comment text in memory so re-judging never touches disk.
 
-## 7. Calibration mode
+## 7. Calibration mode — **partly run, see `FINDINGS.md` §4–5**
 
 Separate route, separate dataset (Jigsaw / Civil Comments, which ships human labels).
+`calibrate/fetch_jigsaw.py` pulls a stratified sample openly from the
+HuggingFace datasets-server; `calibrate/sweep.py` produces the curve offline.
 
 1. Score N comments at the chosen batch size.
 2. For each candidate `CONFIDENCE_FLOOR` from 0.5 to 0.99, compute: % auto-handled, and agreement-with-human-label on the auto-handled subset.
-3. Plot both curves against the threshold.
-4. Pick the knee.
+3. **Sweep the gate as well as the floor** (`min4`, `mean4`, `severity`, `decisive`). The gate turned out to matter far more than the floor.
+4. Plot the curves against the threshold.
+5. Pick the knee.
 
 Set `CONFIDENCE_FLOOR` from this plot, not by picking 0.8 because it sounds round. The plot is also worth exposing as the second tab — it is the difference between "we have an amber lane" and "here is the curve."
+
+**The good news:** agreement on the auto-handled subset rises monotonically with
+the floor and reaches 1.000 at the top. The confidence signal is real, which is
+the entire product claim, and the second tab has something to show.
+
+**The caveat that has to be fixed before the floor is final:** Civil Comments has
+no thread structure, so `on_topic` — "what is it responding to?" — is being asked
+with nothing in the state to respond to. Its mean confidence is 0.50 there
+against 0.86 on the Reddit corpus. Since `on_topic` is frequently the binding
+axis, the whole curve is depressed by a missing field rather than by the model.
+**Re-run this against a fetched Reddit thread before setting the demo's floor.**
 
 ## 8. Frontend
 
@@ -249,14 +359,29 @@ Bounced lane is **blurred by default, click to reveal**. Real moderation tools d
 
 ## 10. Build order
 
-1. `reddit_fetch.py` → one good thread on disk
-2. Batch-size-vs-accuracy experiment (§3.2) — **before any UI**
-3. `judge/` pipeline, verified against a printed console stream
+~~1. `reddit_fetch.py` → one good thread on disk~~ — still to do, now the blocker
+~~2. Batch-size-vs-accuracy experiment (§3.2)~~ — **done**, no knee, `B=15`
+~~3. `judge/` pipeline~~ — `client.py`, `rubric.py`, `lanes.py` exist and are exercised
+
+Revised, in priority order:
+
+1. **`feed/reddit_fetch.py` → one good thread on disk.** Now the critical path.
+   Everything left to tune needs thread context, and the calibration curve is
+   currently being measured on a dataset that does not have it.
+2. **Re-run `calibrate/sweep.py` against that thread** and set
+   `CONFIDENCE_FLOOR` for real. Expect the auto-handled share to improve
+   materially over the 22% measured on Jigsaw.
+3. `feed/replay.py` + `judge/batcher.py` — the streaming half of the pipeline
 4. FastHTML shell + WebSocket + 12Hz render loop
 5. The Pen, with working Allow/Bounce
 6. Counters and the spend meter
 7. Test-your-own-comment
 8. Live rubric editing
-9. Calibration tab (cut first if time runs out)
+9. Calibration tab — **promote this**. It is nearly free now that
+   `calibrate/sweep.py` produces the curve, and it is the direct answer to the
+   accuracy objection in PRD §2.
 
-Steps 1–3 are the weekend's real risk. Steps 4–8 are Claude Code's happy path.
+The risk profile has moved. The model integration is no longer the unknown —
+throughput, cost, latency and batching are all measured and comfortable. What is
+unproven is whether the Pen contains *interesting* comments on real Reddit data,
+which is a content question, not an engineering one, and step 1 is what answers it.
