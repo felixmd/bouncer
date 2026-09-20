@@ -933,3 +933,68 @@ ever getting an answer.
 At $0.000025 a comment this is about abuse rather than the cost of honest use —
 but §19 is the reminder that small numbers times a large multiplier is how the
 credits went the first two times.
+
+## 23. Live rubric editing, and the edit that made it worse
+
+Spec §6's budget was three seconds. Measured, on a live wall:
+
+```
+re-judged 630 comments in 2.9s for $0.0305 — 43 changed lane (7%)
+```
+
+Inside budget, and the seam is visible as the wall re-sorts. At a saturated
+800-comment window it would be ~3.7s, so `REJUDGE_WINDOW` is the dial if that
+matters more than sweep size.
+
+### The edit, and what it did
+
+I edited one `contempt` level, and I edited it *in the direction the project's
+own rules recommend*. The level read:
+
+> "A differing view is called not worth discussing, **or** is refused engagement."
+
+That is a level containing "X, or Y" — exactly what the rubric rules in
+`CLAUDE.md` say not to write. I replaced it with a single situation:
+
+> "A differing view is brushed aside as not worth discussing."
+
+Per-axis mean confidence, same 630 comments before and after:
+
+| axis | before | after | |
+|---|---|---|---|
+| `hostility` | 0.754 | 0.751 | — |
+| **`contempt`** ✎ | **0.649** | **0.632** | **▼ −0.017** |
+| `substance` | 0.761 | 0.761 | — |
+| `on_topic` | 0.487 | 0.490 | — |
+
+**The edit made the axis I edited worse.** A rule-following change, removing a
+documented defect, on the axis it was meant to help — and confidence fell.
+
+That is the third independent confirmation of §11's finding that `contempt` has
+a floor near 0.66 that rewording does not move. It is also the strongest
+possible argument for how this feature should be framed.
+
+### So frame it as a trade, not an improvement
+
+PRD §4.2 offers live rubric editing as the answer to "why not just train a
+classifier" — a trained model needs a labelling run and a retrain; this needs a
+sentence. That claim is **completely intact**: the sentence was rewritten and
+630 comments were re-judged in under three seconds for three cents. No
+retraining pipeline does that.
+
+What is *not* intact is any suggestion that the edit will be an improvement.
+A viewer who edits a level mid-demo will quite likely make it worse, and the
+demo should be built to survive that rather than hope it does not happen. So
+the report shows **every axis**, before and after, on the same comments:
+
+- showing only the edited axis would hide the cost elsewhere;
+- showing only "43 changed lane" would imply motion is progress;
+- showing the deltas makes the honest claim — *this is what tuning actually
+  looks like* — legible without anyone having to say it.
+
+The panel says so in the UI too, above the fields: "Expect a trade rather than
+an improvement."
+
+This is the most useful thing the demo does, and it only works because the
+report is honest. A version that claimed improvement would be wrong roughly
+half the time in front of the room.

@@ -10,6 +10,7 @@ than a frontend rewrite.
 
 import asyncio
 import os
+from dataclasses import replace
 
 import uvicorn
 from fasthtml.common import (
@@ -17,6 +18,7 @@ from fasthtml.common import (
     H2,
     B,
     Button,
+    Details,
     Div,
     Form,
     Header,
@@ -28,6 +30,7 @@ from fasthtml.common import (
     Select,
     Span,
     Style,
+    Summary,
     Textarea,
     Title,
     fast_app,
@@ -37,8 +40,9 @@ import config
 from feed.replay import ThreadStore
 from judge.lanes import Gate, Lane, Policy
 from judge.pipeline import Pipeline
+from judge.rubric import Rubric
 from web.limits import RateLimiter
-from web.render import render_loop, resort_frame, test_result
+from web.render import rejudge_report, render_loop, resort_frame, test_result
 
 CSS = """
 :root {
@@ -80,7 +84,7 @@ h1 span { color:var(--dim); font-weight:400; }
 #tuner { margin:0; }
 
 .lanes { display:grid; grid-template-columns:1fr 1fr 1.3fr; gap:1px;
-  background:var(--edge); height:calc(100vh - 5.6rem); }
+  background:var(--edge); height:calc(100vh - 7.2rem); }
 /* min-width:0 matters: grid items default to min-width:auto, so one long
    unbroken comment stretches its column and squeezes the others. */
 .lane { background:var(--bg); display:flex; flex-direction:column;
@@ -130,6 +134,48 @@ h1 span { color:var(--dim); font-weight:400; }
 .bar-fill { height:100%; }
 .bar-hostility { background:#f85149; } .bar-contempt { background:#db6d28; }
 .bar-substance { background:#3fb950; } .bar-on_topic { background:#58a6ff; }
+
+/* Rubric editor. A native <details> drawer so the wall keeps its height and
+   the panel needs no JS. */
+.drawer { border-bottom:1px solid var(--edge); background:#12151c; }
+.drawer > summary { cursor:pointer; padding:.35rem 1.2rem; color:var(--dim);
+  font-size:.66rem; text-transform:uppercase; letter-spacing:.09em;
+  list-style:none; }
+.drawer > summary::before { content:"▸  "; }
+.drawer[open] > summary::before { content:"▾  "; }
+.editor-body { padding:.5rem 1.2rem .8rem; max-height:52vh; overflow:auto; }
+.editor-note { color:var(--pen); font-size:.72rem; margin-bottom:.5rem;
+  max-width:60rem; }
+.axis-editor > summary { cursor:pointer; font-size:.74rem; font-weight:600;
+  color:var(--ink); padding:.25rem 0; list-style:none; }
+.axis-editor > summary::before { content:"▸  "; color:var(--dim); }
+.axis-editor[open] > summary::before { content:"▾  "; color:var(--dim); }
+.axis-form { display:flex; flex-direction:column; gap:.3rem; padding:.3rem 0 .7rem 1rem;
+  max-width:60rem; }
+.axis-form label { color:var(--dim); font-size:.64rem; text-transform:uppercase;
+  letter-spacing:.08em; margin-top:.2rem; }
+.axis-form input[type=text], .axis-form textarea { font:inherit; font-size:.76rem;
+  background:#0d1016; color:var(--ink); border:1px solid var(--edge);
+  border-radius:4px; padding:.3rem .45rem; resize:vertical; width:100%; }
+.editor-actions { display:flex; align-items:center; gap:.7rem; margin-top:.4rem; }
+.editor-actions .judge { cursor:pointer; font:inherit; font-size:.74rem;
+  font-weight:600; letter-spacing:.04em; padding:.32rem .8rem; border-radius:4px;
+  background:var(--pen); color:#1a1408; border:0; }
+.editor-actions .hint { color:var(--dim); font-size:.66rem; }
+.rubric-report:empty { display:none; }
+.rubric-report { margin-top:.6rem; border:1px solid var(--edge); border-radius:5px;
+  padding:.5rem .6rem; background:var(--panel); max-width:38rem; }
+.rubric-report.htmx-request::after { content:"re-judging the backlog…";
+  color:var(--pen); font-size:.72rem; }
+.report-head { font-size:.76rem; margin-bottom:.15rem; }
+.report-sub { color:var(--dim); font-size:.66rem; margin-bottom:.4rem; }
+.report-row { display:grid; grid-template-columns:8rem 3.4rem 1.2rem 3.4rem 4rem;
+  align-items:center; font-size:.74rem; font-variant-numeric:tabular-nums; }
+.report-row .axis-name { color:var(--ink); }
+.report-row .was { color:var(--dim); }
+.report-row .arrow.up, .report-row .now.up, .report-row .delta.up { color:var(--approved); }
+.report-row .arrow.down, .report-row .now.down, .report-row .delta.down { color:var(--bounced); }
+.report-row .arrow.flat, .report-row .now.flat, .report-row .delta.flat { color:var(--dim); }
 
 /* Test your own comment: PRD 4.2's shareable artifact, at the foot of the Pen
    column because that is where a viewer is already looking. */
@@ -244,6 +290,73 @@ def lane(lane_id: str, title: str, note: str = "", foot=None) -> Div:
     if foot is not None:
         parts.append(foot)
     return Div(*parts, cls="lane")
+
+
+def rubric_editor(pipeline: Pipeline) -> Details:
+    """Edit the level wording, then re-judge the backlog. Spec §6.
+
+    **The expensive one.** Thresholds are a free recompute; level wording
+    changes the question, so every retained comment goes back to the model.
+
+    One form per axis rather than one big form, because `FINDINGS.md` §11 found
+    the winning levels differ *per axis* — a wholesale rewrite lost on two axes
+    and won on two. Editing one axis at a time is both cheaper and the shape the
+    evidence supports.
+    """
+    axes = []
+    for axis in pipeline.rubric.axes:
+        axes.append(
+            Details(
+                Summary(axis.key),
+                Form(
+                    Input(type="hidden", name="axis", value=axis.key),
+                    Label("question", For=f"q-{axis.key}"),
+                    Input(
+                        type="text", name="question", id=f"q-{axis.key}",
+                        value=axis.question,
+                    ),
+                    Label("levels, 0 to 4 — least to most"),
+                    *(
+                        Textarea(
+                            level, name=f"level{i}", rows="2",
+                            id=f"l-{axis.key}-{i}",
+                        )
+                        for i, level in enumerate(axis.levels)
+                    ),
+                    Div(
+                        Button("Re-judge", type="submit", cls="judge"),
+                        Span(
+                            f"{config.REJUDGE_WINDOW} comments, one request per "
+                            f"{config.BATCH_SIZE}",
+                            cls="hint",
+                        ),
+                        cls="editor-actions",
+                    ),
+                    hx_post="/rubric",
+                    hx_target="#rubric-report",
+                    hx_swap="outerHTML",
+                    hx_indicator="#rubric-report",
+                    cls="axis-form",
+                ),
+                cls="axis-editor",
+            )
+        )
+    return Details(
+        Summary("rubric"),
+        Div(
+            Div(
+                "Editing the wording changes the question, so the backlog is "
+                "re-judged — unlike the thresholds above, this one costs money. "
+                "Expect a trade rather than an improvement.",
+                cls="editor-note",
+            ),
+            *axes,
+            Div(id="rubric-report", cls="rubric-report"),
+            cls="editor-body",
+        ),
+        id="rubric-drawer",
+        cls="drawer",
+    )
 
 
 def tester() -> Form:
@@ -381,6 +494,7 @@ def page(store: ThreadStore, pipeline: Pipeline) -> tuple:
             ),
         ),
         Form(controls(pipeline), id="tuner"),
+        rubric_editor(pipeline),
         Div(
             lane("lane-approved", "Approved"),
             lane("lane-bounced", "Bounced", "click to reveal"),
@@ -467,6 +581,39 @@ def build():
     @rt("/")
     def home():
         return page(store, pipeline)
+
+    @rt("/rubric")
+    async def rubric(axis: str, question: str, level0: str = "", level1: str = "",
+                     level2: str = "", level3: str = "", level4: str = ""):
+        """Rewrite one axis and re-judge the backlog. Spec §6.
+
+        One axis at a time, because `FINDINGS.md` §11 found the winning levels
+        differ per axis — a wholesale rewrite lost on two and won on two.
+
+        This is the expensive interaction in the whole app; the thresholds above
+        are free. Reports every axis's confidence before and after on the same
+        comments, because the honest claim is "watch the trade", not "watch it
+        improve".
+        """
+        levels = [level0, level1, level2, level3, level4]
+        levels = [line.strip() for line in levels if line.strip()]
+        if len(levels) < 2 or not question.strip():
+            return Div(
+                "a Score needs a question and at least two levels",
+                id="rubric-report", cls="rubric-report",
+            )
+
+        edited = replace(
+            next(a for a in pipeline.rubric.axes if a.key == axis),
+            question=question.strip(), levels=levels,
+        )
+        rebuilt = Rubric(
+            axes=[edited if a.key == axis else a for a in pipeline.rubric.axes]
+        )
+        report = await pipeline.rejudge(rebuilt)
+        if report.verdicts:
+            await broadcast(resort_frame(pipeline, report.verdicts))
+        return rejudge_report(report, axis)
 
     @rt("/test")
     async def test(request, comment: str = "", context: str = ""):

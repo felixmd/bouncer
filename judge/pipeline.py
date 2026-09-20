@@ -19,8 +19,9 @@ exists.
 import argparse
 import asyncio
 import contextlib
+import statistics
 import time
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field, replace
 
 import config
@@ -47,6 +48,27 @@ class Verdict:
         if not self.confidences:
             return None
         return min(self.confidences, key=lambda axis: self.confidences[axis])
+
+
+@dataclass
+class RejudgeReport:
+    """What a rubric edit actually did — paired, on the same comments."""
+
+    rubric: Rubric
+    verdicts: list[Verdict] = field(default_factory=list)
+    n: int = 0
+    moved: int = 0
+    before: dict[str, float] = field(default_factory=dict)
+    after: dict[str, float] = field(default_factory=dict)
+    seconds: float = 0.0
+    cost: float = 0.0
+
+    def delta(self, axis: str) -> float:
+        return self.after.get(axis, 0.0) - self.before.get(axis, 0.0)
+
+    @property
+    def moved_share(self) -> float:
+        return self.moved / self.n if self.n else 0.0
 
 
 class Backlog:
@@ -231,6 +253,84 @@ class Pipeline:
             confidences=confidences,
             probabilities=probabilities,
             gate_confidence=decision_confidence(scores, probabilities, self.policy),
+        )
+
+    async def rejudge(self, rubric: Rubric, window: int | None = None) -> "RejudgeReport":
+        """Swap the rubric and re-score the retained backlog. Spec §6.
+
+        **This is the expensive interaction.** Thresholds are a free recompute
+        (`retune`); level *wording* changes the question, so every comment has
+        to go back to the model. Raw text is already in memory, so nothing
+        touches disk — but the requests are real.
+
+        Reports per-axis confidence **before and after on the same comments**,
+        paired. That is deliberate: `FINDINGS.md` §11 found the v1→v2 rewrite
+        was a trade rather than an improvement, so "watch it get better" is not
+        a claim this can make. "Watch the confidence on the axis you edited
+        move, and watch what it costs you elsewhere" is both truer and more
+        interesting.
+        """
+        window = window or config.REJUDGE_WINDOW
+        targets = [
+            v for v in self.backlog.recent(window)
+            if not v.error and v.confidences and v.comment is not None
+        ]
+        if not targets:
+            return RejudgeReport(rubric=rubric)
+
+        before_lanes = {v.comment.id: v.lane for v in targets}
+        before_conf = {
+            axis: statistics.mean(v.confidences[axis] for v in targets)
+            for axis in self.rubric.keys
+        }
+        spend_before = self.client.stats.cost_usd
+        started = time.monotonic()
+
+        self.rubric = rubric
+        by_thread: dict[str, list[Comment]] = defaultdict(list)
+        for verdict in targets:
+            by_thread[verdict.comment.thread_id].append(verdict.comment)
+
+        batches = [
+            group[i:i + config.BATCH_SIZE]
+            for group in by_thread.values()
+            for i in range(0, len(group), config.BATCH_SIZE)
+        ]
+        fresh: dict[str, Verdict] = {}
+        for part in await asyncio.gather(*(self.judge(b) for b in batches)):
+            for verdict in part:
+                fresh[verdict.comment.id] = verdict
+
+        # Update in place so the backlog, the DOM ids and the Pen's buttons all
+        # keep referring to the same comments.
+        moved, rescored = 0, []
+        for verdict in targets:
+            new = fresh.get(verdict.comment.id)
+            if new is None or new.error:
+                continue
+            if new.lane is not before_lanes[verdict.comment.id]:
+                moved += 1
+            verdict.lane = new.lane
+            verdict.scores = new.scores
+            verdict.confidences = new.confidences
+            verdict.probabilities = new.probabilities
+            verdict.gate_confidence = new.gate_confidence
+            rescored.append(verdict)
+
+        after_conf = {
+            axis: statistics.mean(v.confidences[axis] for v in rescored)
+            for axis in rubric.keys
+        } if rescored else {}
+
+        return RejudgeReport(
+            rubric=rubric,
+            verdicts=rescored,
+            n=len(rescored),
+            moved=moved,
+            before=before_conf,
+            after=after_conf,
+            seconds=time.monotonic() - started,
+            cost=self.client.stats.cost_usd - spend_before,
         )
 
     def retune(self, policy: Policy) -> list[Verdict]:

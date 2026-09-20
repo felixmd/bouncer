@@ -17,7 +17,7 @@ from fasthtml.common import Button, Div, Span, to_xml
 
 import config
 from judge.lanes import Lane
-from judge.pipeline import Pipeline, Verdict
+from judge.pipeline import Pipeline, RejudgeReport, Verdict
 from judge.rubric import DEFAULT_RUBRIC
 
 LANE_IDS = {Lane.APPROVED: "lane-approved", Lane.BOUNCED: "lane-bounced", Lane.PEN: "lane-pen"}
@@ -248,6 +248,50 @@ def test_result(verdict: Verdict) -> Div:
         Div(why, cls="verdict-why"),
         id="test-result",
         cls="test-result",
+    )
+
+
+def rejudge_report(report: RejudgeReport, edited: str) -> Div:
+    """What the edit did, paired, on the same comments.
+
+    Reports every axis, not just the edited one. `FINDINGS.md` §11 found the
+    v1→v2 rewrite was a trade — better on `on_topic`, worse on `hostility` — so
+    showing only the axis someone touched would hide the interesting half. "Look
+    what it cost you elsewhere" is the honest version of this feature and a
+    better answer to "why not train a classifier" than "watch it improve".
+    """
+    if not report.n:
+        return Div("nothing in the backlog to re-judge yet",
+                   id="rubric-report", cls="rubric-report")
+
+    rows = []
+    for axis in report.after:
+        delta = report.delta(axis)
+        arrow = "▲" if delta > 0.005 else ("▼" if delta < -0.005 else "—")
+        cls = "up" if delta > 0.005 else ("down" if delta < -0.005 else "flat")
+        rows.append(
+            Div(
+                Span(axis + (" ✎" if axis == edited else ""), cls="axis-name"),
+                Span(f"{report.before[axis]:.3f}", cls="was"),
+                Span(arrow, cls=f"arrow {cls}"),
+                Span(f"{report.after[axis]:.3f}", cls=f"now {cls}"),
+                Span(f"{delta:+.3f}", cls=f"delta {cls}"),
+                cls="report-row",
+            )
+        )
+
+    return Div(
+        Div(
+            f"re-judged {report.n} comments in {report.seconds:.1f}s "
+            f"for ${report.cost:.4f} — {report.moved} changed lane "
+            f"({report.moved_share:.0%})",
+            cls="report-head",
+        ),
+        Div("mean confidence per axis, same comments before and after",
+            cls="report-sub"),
+        *rows,
+        id="rubric-report",
+        cls="rubric-report",
     )
 
 

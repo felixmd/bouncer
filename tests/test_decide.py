@@ -4,9 +4,12 @@
 is deliberate — see `web/render.build_frame`.
 """
 
+import pytest
+
 from feed.replay import Comment, Thread, ThreadStore
 from judge.lanes import Gate, Lane, Policy
-from judge.pipeline import Pipeline, Verdict
+from judge.pipeline import Pipeline, RejudgeReport, Verdict
+from judge.rubric import DEFAULT_RUBRIC
 
 
 def comment(index: int = 0) -> Comment:
@@ -149,6 +152,45 @@ def test_auto_handled_share_tracks_the_policy():
     assert p.auto_handled == 0.0
     p.retune(Policy(gate=Gate.DECISIVE, floor=0.5))
     assert p.auto_handled == 1.0
+
+
+def test_rejudge_report_reads_as_a_trade_not_an_improvement():
+    """FINDINGS §11 found the v1→v2 rewrite was a trade, so the report has to
+    show every axis — showing only the edited one would hide the cost."""
+    report = RejudgeReport(
+        rubric=DEFAULT_RUBRIC, n=630, moved=43,
+        before={"hostility": 0.754, "contempt": 0.649},
+        after={"hostility": 0.751, "contempt": 0.632},
+        seconds=2.9, cost=0.0305,
+    )
+    assert report.delta("contempt") == pytest.approx(-0.017, abs=1e-6)
+    assert report.delta("hostility") == pytest.approx(-0.003, abs=1e-6)
+    assert report.moved_share == pytest.approx(43 / 630)
+
+
+def test_an_empty_report_does_not_divide_by_zero():
+    report = RejudgeReport(rubric=DEFAULT_RUBRIC)
+    assert report.moved_share == 0.0
+    assert report.delta("hostility") == 0.0
+
+
+async def test_rejudge_with_an_empty_backlog_is_a_no_op():
+    """Clicking re-judge before anything has streamed must not call the model —
+    there is no key in tests, so a call would raise."""
+    p = pipeline()
+    report = await p.rejudge(DEFAULT_RUBRIC)
+    assert report.n == 0
+    assert p.client.stats.requests == 0
+
+
+async def test_rejudge_skips_errored_verdicts():
+    """They have no confidences to compare, and re-judging a failure tells you
+    nothing about the wording you changed."""
+    p = pipeline()
+    p.backlog.add(Verdict(comment=comment(0), lane=Lane.PEN, error="boom"))
+    report = await p.rejudge(DEFAULT_RUBRIC)
+    assert report.n == 0
+    assert p.client.stats.requests == 0
 
 
 def test_errored_verdicts_are_left_in_the_pen_by_a_retune():

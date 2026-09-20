@@ -197,17 +197,22 @@ API's maximum possible token rate.
   - [x] per-IP sliding window plus a hard total cap for the process run — spec §9. A held request does not consume the total budget, or a retry loop would exhaust the cap without anyone getting an answer
   - [x] an optional "replying to…" field, which is **not decoration**: `on_topic` scored against nothing is a documented cause of low confidence (§9), so without it every test comment would pen for a reason unrelated to what was typed
   - **Worth being ready to explain:** a textbook contempt comment scores `contempt` 9.2/10 and still pens, because the gate is only 79% sure and `contempt` is the axis §11 found has a floor around 0.66. The weakest axis is the one a viewer is most likely to probe on purpose
-- [ ] **6.2 Live rubric editing** — edit levels, re-judge the backlog, re-sort
-  - budget is under 3s; cap the re-judged window at ~800 if needed — spec §6
-  - **be honest about what this shows.** The v1→v2 rewrite took careful work and
-    came out a lateral move. A viewer editing a level mid-demo will plausibly
-    make it worse, and "watch the confidence on that axis move" is a truer and
-    more interesting story than "watch it get better"
+- [x] **6.2 Live rubric editing** — `FINDINGS.md` §23. **630 comments re-judged in 2.9s for $0.0305, 43 changed lane.** Inside spec §6's three-second budget
+  - one axis at a time, because §11 found the winning levels differ per axis
+  - the report shows **every axis, before and after, on the same comments** — showing only the edited one would hide the cost, and showing only "43 moved" would imply motion is progress
+  - **the test edit made things worse, and that is the finding.** Removing an "X, or Y" level — exactly what the rubric rules say to do — dropped `contempt` confidence by 0.017. Third independent confirmation that axis has a floor rewording cannot move
+  - PRD §4.2's claim survives intact: a sentence, three seconds, three cents, no retraining pipeline. What does *not* survive is any suggestion the edit will be an improvement, and the UI says so above the fields
 - [x] **6.3 Tunables surfaced** — drip rate, confidence floor, severity, gate
   - **retuning is free**: every verdict carries its scores and per-level probabilities, so a new threshold is a pure recompute over the backlog with no model calls. Verified live — dragging the floor from 0.99 to 0.55 re-sorted the whole wall for zero extra API requests (`FINDINGS.md` §21)
   - the expensive cousin is 6.2: rubric *wording* changes the question and does need re-judging
 - [x] **6.4 Auto-handled share is live** beside the controls — PRD §6.1
   - 31% at floor 0.99, 75% at 0.85, 96% at 0.55. The honest version turned out to be cheaper to run than the hard-coded claim would have been
+
+## Phase 6 — done
+
+All three PRD §4.2 interaction hooks work: the Pen with Allow/Bounce, live
+rubric editing, and test-your-own-comment. Plus the tunables and the live
+auto-handled share.
 
 ## Phase 7 — calibration tab
 
