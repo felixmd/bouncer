@@ -28,6 +28,7 @@ from fasthtml.common import (
 
 import config
 from feed.replay import ThreadStore
+from judge.lanes import Lane
 from judge.pipeline import Pipeline
 from web.render import render_loop
 
@@ -51,6 +52,7 @@ h1 span { color:var(--dim); font-weight:400; }
   text-transform:uppercase; letter-spacing:.09em; }
 .stat.pen b { color:var(--pen); }
 .stat.err b { color:var(--bounced); }
+.stat.decided-stat b { color:#7fd18a; }
 
 .lanes { display:grid; grid-template-columns:1fr 1fr 1.3fr; gap:1px;
   background:var(--edge); height:calc(100vh - 3.5rem); }
@@ -82,6 +84,21 @@ h1 span { color:var(--dim); font-weight:400; }
 .why { margin-left:auto; color:var(--pen); font-size:.67rem; }
 .body { font-size:.8rem; overflow-wrap:anywhere; white-space:pre-wrap; }
 .card.pen .body { font-size:.87rem; }
+
+/* The Pen is the only lane anyone is expected to act on, so it is the only one
+   with controls. */
+.decide { display:flex; gap:.4rem; margin-top:.5rem; }
+.decide button { flex:1; cursor:pointer; font:inherit; font-size:.72rem;
+  font-weight:600; letter-spacing:.04em; padding:.3rem 0; border-radius:4px;
+  background:#20242e; color:var(--ink); border:1px solid var(--edge);
+  transition:background .12s, border-color .12s; }
+.decide button:hover { background:#2a3140; }
+.decide .allow:hover  { border-color:var(--approved); color:var(--approved); }
+.decide .bounce:hover { border-color:var(--bounced); color:var(--bounced); }
+.decided { margin-left:auto; color:#7fd18a; font-size:.67rem; font-weight:600; }
+/* A card a human resolved keeps a hint of amber, so the Pen's work stays
+   visible after it leaves the Pen. */
+.card.was-penned { border-right:2px solid var(--pen); }
 
 .fingerprint { display:flex; gap:3px; margin-bottom:.35rem; }
 .bar { flex:1; height:4px; background:#0a0c11; border-radius:2px; overflow:hidden; }
@@ -163,6 +180,7 @@ def page(store: ThreadStore) -> tuple:
                 stat("rate", "per sec"),
                 stat("judged", "judged"),
                 stat("pen", "in the pen", cls="pen"),
+                stat("decided", "you decided", cls="decided-stat"),
                 stat("spend", "spent"),
                 # Errors sit beside the Pen and are never folded into it. A
                 # failed request pens fifteen comments, and a Pen padded with
@@ -188,6 +206,8 @@ def build():
     tasks: dict[str, asyncio.Task] = {}
 
     async def on_startup() -> None:
+        # Held until a browser connects, so an idle server costs nothing.
+        pipeline.demand.clear()
         await pipeline.start()
         tasks["render"] = asyncio.create_task(render_loop(pipeline, broadcast))
         print(f"  {store.describe()}")
@@ -219,11 +239,25 @@ def build():
     # `out_queue`, so two draining loops would hand each client half the stream.
     sockets: set = set()
 
+    def set_demand() -> None:
+        """Judge only while someone is watching.
+
+        Not an optimisation — a cost control. Eight dev servers orphaned by
+        restarts kept judging at ~225 items/sec with nobody watching and drained
+        the account's credits. See FINDINGS §19.
+        """
+        if sockets:
+            pipeline.demand.set()
+        else:
+            pipeline.demand.clear()
+
     async def on_connect(ws):
         sockets.add(ws)
+        set_demand()
 
     async def on_disconnect(ws):
         sockets.discard(ws)
+        set_demand()
 
     @app.ws("/ws", conn=on_connect, disconn=on_disconnect)
     async def socket():
@@ -240,6 +274,22 @@ def build():
     @rt("/")
     def home():
         return page(store)
+
+    @rt("/decide")
+    def decide(id: str, lane: str):
+        """A human resolves one penned comment. Anyone can click — PRD §4.2.
+
+        Returns nothing. The move goes out on the next 12Hz frame, so every DOM
+        mutation travels one channel and nothing races. Answering here instead
+        cost an afternoon — see `FINDINGS.md` §20.
+
+        A comment that has aged out of the 2,000-verdict backlog returns `False`
+        and simply does not move; the card will be evicted by the DOM cap
+        shortly anyway.
+        """
+        target = Lane.APPROVED if lane == "approved" else Lane.BOUNCED
+        pipeline.decide(id, target)
+        return ""
 
     @rt("/health")
     def health():

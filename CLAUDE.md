@@ -83,6 +83,17 @@ Three pipeline settings that are not obvious and were each found the hard way:
 - **8 workers, not 32.** 24 workers gained 9% throughput and multiplied 429s fifteenfold.
 - **Count errors separately from the Pen, always.** A failed request pens fifteen comments by design, so concurrency pressure quietly turned a 14% Pen into a 22% one where the extra was failures. A Pen full of errors is indistinguishable from a Pen full of hard cases and is worthless.
 
+## Cost: cheap per decision, expensive per minute
+
+$0.034 per 1,000 comments — and **$0.41 per minute** of streaming at 205/s, which is $24.80/hour. Both are true; the second is the one that governs running the thing, and it drained the account's credits twice before anyone computed it. See `FINDINGS.md` §19.
+
+The unit price is not the problem: 93% of every request is overhead, because each of the four Score questions carries its own copy of the rubric *and* of the comment. At 205/s that is ~121K tokens/sec against a 250K ceiling — roughly half the maximum this API can bill.
+
+- **Never leave the app running unattended.** `preview_stop` does not kill the `uv run` child; check for orphaned `python` processes after restarting. Eight of them judging for nobody is what burned the credits.
+- **The pipeline only judges while a browser is connected** (`Replay.demand`). Keep it that way.
+- **The drip rate is the cost dial**, and it is already in the UI. 20/s still reads as a stream and costs a tenth as much.
+- Before optimising tokens, remember that rubric wording *is* confidence (see the rubric rules). Shortening levels trades directly against the Pen.
+
 Use **Score**, not Noul, for the four axes. Nouls pile up at the extremes; Scores spread into a usable distribution. Confirmed — scores hit the rails only 25% of the time.
 
 ### Documented jagged edges that bite this project

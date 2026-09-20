@@ -174,14 +174,22 @@ building the thing that displays them.
 
 ## Phase 5 — the Pen
 
-The point of the demo. If time runs out, this is what must work.
+- [x] **5.1** Pen lane visually heavier — amber, larger body text, wider column
+- [x] **5.2 Allow / Bounce, working, anyone can click.** The card leaves the Pen, lands in the chosen lane marked "you decided", loses its buttons, and a counter tracks what the room resolved
+  - decisions travel the WebSocket frame, not the POST response, so all DOM mutation is on one channel serialised on the tick
+  - the bug worth remembering: the resolved card was being truncated away by the per-frame sample. Allow failed and Bounce worked, and the tell was that it tracked lane *volume*, not lane identity — `FINDINGS.md` §20
+- [x] **5.3 Penned cards say which axis was unsure**, which is the difference between a Pen that reads as a decision and one that reads as a shrug
 
-- [ ] **5.1** Pen lane visually heavier than the other two — attention goes here
-- [ ] **5.2** Allow / Bounce buttons, working, anyone can click
-- [ ] **5.3 Show *why* a comment was penned** — which axis was decisive and its confidence
-  - this is what makes the Pen legible rather than a shrug, and `decisive` gating
-    means we already know exactly which axis it was
-  - *Done when:* a viewer can tell at a glance which axis the model was unsure about
+## Phase 5b — cost control
+
+The credits ran out twice. `FINDINGS.md` §19 has the numbers: **$0.034 per
+1,000 comments but $0.41 per minute** of continuous streaming, because 93% of
+every request is rubric and comment duplication and we run at roughly half the
+API's maximum possible token rate.
+
+- [x] **5b.1 Judge only while someone is watching.** `Replay` waits on a demand event that `web/app.py` clears when no socket is connected. `preview_stop` does not kill the `uv run` child, so eight orphaned servers had been judging at ~225/s for nobody — this is what drained the account, and it also caused the 429 storm that looked like a rate-limit mystery in §16
+- [ ] **5b.2 Drop the default drip rate.** 205/s is $24.80/hour; 20/s is $2.42 and still reads as a stream. The headline number does not need to be sustained to be demonstrated — **needs a product call on what the ambient rate should be**
+- [ ] **5b.3 Index-address `hostility` and `contempt`.** §2's `quoted` win was entirely on `on_topic` and `substance`; both intrinsic axes were *ns*, so they can read the comment from the shared state instead of quoting it. ~13% cheaper at no measured confidence cost. Untested
 
 ## Phase 6 — the three interaction hooks
 

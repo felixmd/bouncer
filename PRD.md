@@ -140,7 +140,7 @@ The demo works if:
 
 1. It is legible in eight seconds with no explanation.
 2. Throughput shown is ≥ 200 items/sec sustained. — **clears comfortably.** 20 req/s × B=15 = 300/sec, and batching costs no accuracy up to B=30.
-3. Spend counter stays visibly trivial (cents) against a five-figure volume counter. — **clears by a mile.** ~$0.038 per 1,000 comments. The entire investigation behind `FINDINGS.md` cost 22 cents.
+3. Spend counter stays visibly trivial (cents) against a five-figure volume counter. — **clears as written, but read §6.2.** $0.034 per 1,000 comments. The same rate is **$0.41 per minute** of continuous streaming, which is the number that actually governs running the thing.
 4. The Pen contains genuinely ambiguous comments — a viewer who clicks in should hesitate before choosing Allow or Bounce. If the Pen is full of obvious cases, the threshold is wrong.
 5. Editing the rubric visibly re-sorts the backlog in under three seconds.
 6. At least one person asks to try their own comment.

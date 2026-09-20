@@ -123,6 +123,48 @@ def test_an_empty_lane_is_omitted_rather_than_sent_empty():
     assert 'id="lane-approved"' not in html
 
 
+def test_a_decision_leaves_the_pen_and_lands_in_the_chosen_lane():
+    moved = verdict(Lane.APPROVED)
+    html = build_frame(FakePipeline(), [], [(moved.comment.id, moved)])
+    assert 'hx-swap-oob="delete"' in html
+    assert 'id="c-t1-c000"' in html  # the penned card, removed
+    assert 'id="c-t1-c000-decided"' in html  # its replacement, different id
+    assert 'id="lane-approved"' in html
+    assert "you decided" in html
+
+
+def test_a_decided_card_has_no_buttons_to_click_twice():
+    moved = verdict(Lane.PEN)
+    html = build_frame(FakePipeline(), [], [(moved.comment.id, moved)])
+    assert html.count("/decide?") == 0
+
+
+def test_a_decision_survives_the_per_frame_sample():
+    """The bug that made Allow silently do nothing: the decided card was
+    appended behind ~19 streamed verdicts and truncated away by the cap, while
+    Bounce worked because its lane is almost always empty."""
+    streamed = [verdict(Lane.APPROVED, i) for i in range(config.CARDS_PER_FRAME + 20)]
+    moved = verdict(Lane.APPROVED, 999)
+    html = build_frame(FakePipeline(), streamed, [(moved.comment.id, moved)])
+    assert 'id="c-t1-c999-decided"' in html
+    assert "you decided" in html
+
+
+def test_pen_cards_carry_buttons_and_other_lanes_do_not():
+    penned = build_frame(FakePipeline(), [verdict(Lane.PEN)])
+    approved = build_frame(FakePipeline(), [verdict(Lane.APPROVED)])
+    assert "/decide?" in penned
+    assert "/decide?" not in approved
+
+
+def test_card_ids_are_selector_safe():
+    """Comment ids contain a colon, which is legal in an HTML id but breaks
+    `querySelector` — and htmx has to find this element to delete it."""
+    from web.render import card_id
+
+    assert ":" not in card_id("hn41002195:c2268")
+
+
 def test_drain_is_what_the_tick_calls_not_the_worker(monkeypatch):
     """Invariant 1 in structural form: `Pipeline.drain` empties the queue in one
     go, so a frame is per tick rather than per classification."""

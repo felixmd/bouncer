@@ -715,4 +715,126 @@ API was dead. That is a small piece of work and it is now the difference
 between a demo and a blank room.
 
 Total spend across every experiment in this document: well under a dollar. The
-credits did not run out because this project is expensive.
+credits did not run out because the experiments are expensive — see §19.
+
+## 19. Cost per decision is trivial. Cost per minute is not
+
+The credits ran out twice. Neither time was an experiment's fault, and the
+reason is a number nobody had computed.
+
+At the measured ~800 tokens per comment and 205 items/sec sustained:
+
+| | |
+|---|---|
+| per 1,000 comments | **$0.034** |
+| per 10,000 comments | $0.34 |
+| **per minute of streaming** | **$0.41** |
+| per hour | $24.80 |
+| an 8-hour conference day | **$198** |
+
+Both columns are true and they tell opposite stories. PRD §6's third success
+criterion — "spend counter stays visibly trivial (cents) against a five-figure
+volume counter" — holds exactly as written: 10,000 comments really is 34 cents,
+and that is the claim worth making to a buyer costing out a moderation queue.
+
+But **the demo is not a queue, it is a wall that runs continuously**, and
+nobody had multiplied the per-comment figure by wall-clock seconds. An ambient
+display left up during a day of meetings costs about two hundred dollars.
+
+### The model is cheap. The request is fat.
+
+$0.042/M input tokens really is cheap: one comment costs about **$0.000025**.
+The spend does not come from the unit price, it comes from sending 15× more
+tokens than the comment contains. Decomposed per comment at B=15:
+
+| | tokens | share |
+|---|---|---|
+| rubric levels, sent once **per question** | 346 | **58%** |
+| comment body, sent once **per question** | 156 | 26% |
+| parent snippet, on the two context axes | 54 | 9% |
+| axis question text | 37 | 6% |
+| **total sent** | **~593** | |
+| the comment itself | 39 | **7%** |
+
+**93% of every request is overhead**, and it is structural rather than sloppy:
+each Score question is answered independently against the shared state, so each
+one has to carry its own criteria. Four axes means four copies of the rubric and
+— under `quoted` addressing — four copies of the comment. The fan-out that makes
+Jev fast is what makes it token-fat.
+
+Multiply by 205 comments/sec and it is ~121K tokens/sec, against a published
+ceiling of 250K. **We are running the thing at roughly half its maximum
+possible throughput, continuously.** The most this API can bill is about
+$38/hour; at $25 we are simply near that. No model is cheap when held flat out.
+
+Three ways down, in order of leverage:
+
+- **Drip rate.** 20/s is $2.42/hour and still reads as a stream. The headline
+  205/s does not need to be *sustained* to be shown.
+- **Shorter rubric levels** would cut the largest slice, but §11 showed level
+  wording is exactly what confidence is made of. That is a direct trade against
+  the Pen, and the Pen is the product.
+- **Index-address the two intrinsic axes.** §2's measured win from `quoted` was
+  entirely on `on_topic` (+0.140) and `substance` (+0.031); `hostility` (−0.012)
+  and `contempt` (+0.015) were both *ns*. So those two could take the comment
+  from the shared state instead of quoting it, halving the body duplication at
+  no measured confidence cost. Worth about 13% — untested, and the cheapest
+  honest saving on the list.
+
+### What actually drained it
+
+`preview_stop` does not kill the `uv run` child process. Eight restarts left
+eight pipelines judging at ~225 items/sec with no browser attached — roughly
+$3/minute in aggregate, for nobody. The 429 storm that looked like a rate-limit
+mystery in §16 was partly these servers competing with each other: killing them
+took the error rate from 49% to 2% with no code change.
+
+### Mitigations, in order of how much they matter
+
+1. **Judge only while someone is watching.** `Replay` now waits on a `demand`
+   event that `web/app.py` clears whenever no socket is connected. An orphaned
+   dev server now costs nothing. This is a cost control, not an optimisation,
+   and it is the single change that would have prevented both outages.
+2. **The drip rate is the cost dial, and it is already in the UI.** 205/s is
+   $24.80/hour; 20/s is $2.42/hour and still looks like a stream. The headline
+   throughput number does not have to be *sustained* to be demonstrated — the
+   counter can be pushed to 200/s for the moment someone asks and left low
+   otherwise.
+3. **Offline replay (`TASKS.md` 4b.2) is the right default for an all-day
+   wall**, not merely insurance. Recorded verdicts cost nothing, and live
+   judging can be reserved for the interaction hooks — test-your-own-comment
+   and rubric editing — which is where a viewer actually wants to see the model
+   think.
+
+This is the clearest capability finding in the document, and it is not about
+accuracy. **Jev is cheap per decision and the architecture is cheap per
+decision; a demo that never stops making decisions is not cheap.**
+
+## 20. Phase 5: the Pen closes the loop
+
+Allow / Bounce work. A penned card leaves the Pen, lands in the lane the human
+chose marked "you decided", loses its buttons so it cannot be clicked twice,
+and a counter tracks how many the room has resolved. Nothing persists — PRD §8
+has no accounts or storage — and that is fine: the visible effect is the point,
+because the Pen *draining as people work it* is the human-in-the-loop story the
+whole demo is making.
+
+Two things worth recording.
+
+**Decisions travel the WebSocket, not the POST response.** `/decide` records
+and returns nothing; the move renders on the next 12Hz frame. That keeps every
+DOM mutation on one channel, serialised on the tick, which is what invariant 1
+was already asking for.
+
+**But that refactor was not the bug fix, and the first diagnosis was wrong.**
+Allow silently did nothing while Bounce worked, and the obvious story — two
+channels racing for the same busy lane container — was wrong. The actual cause
+was the per-frame card sample: the resolved card was appended to the Approved
+list *behind* the ~19 streamed verdicts of that tick, then truncated away by
+`CARDS_PER_FRAME = 8`. Bounced worked only because its lane is nearly always
+empty, so nothing got truncated.
+
+The tell was there the whole time: the failure tracked lane *volume*, not lane
+identity. Decided cards are now kept out of the sampled list entirely, which is
+also the correct rule — §17's note that the Pen is never sampled applies just
+as much to a comment a human has already acted on.

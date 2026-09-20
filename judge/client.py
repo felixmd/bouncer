@@ -68,14 +68,24 @@ class JudgeClient:
         rate_per_second: float = config.REQUESTS_PER_SECOND,
         max_concurrent: int = config.MAX_CONCURRENT_REQUESTS,
     ) -> None:
-        self._client = AsyncTypeSafeClient(
-            model=config.JEV_MODEL,
-            retry=RetryPolicy(max_retries=config.MAX_RETRIES),
-            timeout=config.API_TIMEOUT_S,
-        )
+        # Built on first use, not here. `AsyncTypeSafeClient()` raises without
+        # TYPESAFE_API_KEY, and constructing a Pipeline — for its backlog, its
+        # counters, its lane policy — must not require a key. Tests run keyless
+        # by convention and the render layer only ever reads `stats`.
+        self._client: AsyncTypeSafeClient | None = None
         self._bucket = TokenBucket(rate_per_second, config.TOKEN_BUCKET_CAPACITY)
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self.stats = Stats()
+
+    @property
+    def client(self) -> AsyncTypeSafeClient:
+        if self._client is None:
+            self._client = AsyncTypeSafeClient(
+                model=config.JEV_MODEL,
+                retry=RetryPolicy(max_retries=config.MAX_RETRIES),
+                timeout=config.API_TIMEOUT_S,
+            )
+        return self._client
 
     async def ask(
         self, state: object, questions: Mapping[str, Question]
@@ -86,7 +96,7 @@ class JudgeClient:
         started = time.perf_counter()
         async with self._semaphore:
             try:
-                response = await self._client.system_one(state=state, questions=questions)
+                response = await self.client.system_one(state=state, questions=questions)
             except (TimeoutError, TypeSafeError) as exc:
                 latency_ms = (time.perf_counter() - started) * 1000
                 self.stats.requests += 1
@@ -101,7 +111,8 @@ class JudgeClient:
         return response, latency_ms, None
 
     async def aclose(self) -> None:
-        await self._client.aclose()
+        if self._client is not None:
+            await self._client.aclose()
 
     async def __aenter__(self) -> "JudgeClient":
         return self

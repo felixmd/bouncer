@@ -21,7 +21,7 @@ import asyncio
 import contextlib
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import config
 from feed.replay import Comment, Replay, ThreadStore
@@ -65,6 +65,17 @@ class Backlog:
     def recent(self, count: int) -> list[Verdict]:
         return list(self._items)[-count:]
 
+    def get(self, comment_id: str) -> Verdict | None:
+        """Look one up so a human's Allow/Bounce can re-render its card.
+
+        Searched newest-first: a comment a human is looking at right now is at
+        the recent end, and the deque is only 2,000 long.
+        """
+        for verdict in reversed(self._items):
+            if verdict.comment is not None and verdict.comment.id == comment_id:
+                return verdict
+        return None
+
     def __len__(self) -> int:
         return len(self._items)
 
@@ -73,6 +84,7 @@ class Backlog:
 class Counters:
     judged: int = 0
     errored: int = 0
+    decided: int = 0  # penned comments a human resolved
     lanes: dict[str, int] = field(default_factory=lambda: dict.fromkeys(Lane, 0))
     started_at: float = field(default_factory=time.monotonic)
 
@@ -103,13 +115,21 @@ class Pipeline:
     ) -> None:
         self.store = store
         self.rubric = rubric
-        self.replay = Replay(store, rate=rate)
+        # Set by default so the console runner streams. web/app.py clears it
+        # while no browser is connected — see Replay.demand.
+        self.demand = asyncio.Event()
+        self.demand.set()
+        self.replay = Replay(store, rate=rate, demand=self.demand)
         self.batcher = Batcher()
         self.client = JudgeClient()
         self.in_queue: asyncio.Queue[Comment] = asyncio.Queue(config.IN_QUEUE_MAX)
         self.out_queue: asyncio.Queue[Verdict] = asyncio.Queue(config.OUT_QUEUE_MAX)
         self.backlog = Backlog()
         self.counters = Counters()
+        # Human decisions waiting to go out on the next frame. They travel the
+        # same channel as everything else on purpose: two channels mutating the
+        # same DOM subtree race, and the busy lane loses. See FINDINGS §20.
+        self.decisions: deque[tuple[str, Verdict]] = deque()
         self._worker_count = workers
         self._tasks: list[asyncio.Task] = []
         self._batch_queue: asyncio.Queue[list[Comment]] = asyncio.Queue(config.IN_QUEUE_MAX)
@@ -196,6 +216,25 @@ class Pipeline:
                 out.append(self.out_queue.get_nowait())
             except asyncio.QueueEmpty:
                 return out
+
+    def drain_decisions(self) -> list[tuple[str, Verdict]]:
+        """(dom id to remove, the resolved verdict) for each human decision."""
+        out = list(self.decisions)
+        self.decisions.clear()
+        return out
+
+    def decide(self, comment_id: str, lane: Lane) -> bool:
+        """Record a human's Allow/Bounce. Renders on the next frame.
+
+        Nothing persists — PRD §8 has no accounts and no storage. The visible
+        effect is the point: the Pen *drains* as people work it.
+        """
+        verdict = self.backlog.get(comment_id)
+        if verdict is None:
+            return False
+        self.counters.decided += 1
+        self.decisions.append((comment_id, replace(verdict, lane=lane)))
+        return True
 
 
 # --- console runner: the build-order step before any HTML ------------------

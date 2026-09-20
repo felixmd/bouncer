@@ -125,10 +125,19 @@ class Replay:
     """
 
     def __init__(self, store: ThreadStore, rate: float = config.DRIP_RATE_PER_SECOND,
-                 shuffle: bool = True) -> None:
+                 shuffle: bool = True, demand: asyncio.Event | None = None) -> None:
         self.store = store
         self.rate = rate
         self.shuffle = shuffle
+        # When set, the reader only drips while `demand` is set. The web app
+        # clears it whenever no browser is connected.
+        #
+        # This is not an optimisation, it is a cost control. Eight dev servers
+        # orphaned by restarts kept judging at ~225 items/sec with nobody
+        # watching and drained the account's credits. A judge with no audience
+        # should not be spending money. `None` means always-on, which is what
+        # the console runner wants.
+        self.demand = demand
         self.emitted = 0
         self.laps = 0
 
@@ -141,6 +150,8 @@ class Replay:
                     # comments and makes the first minute unrepresentative.
                     random.shuffle(comments)
                 for comment in comments:
+                    if self.demand is not None:
+                        await self.demand.wait()
                     # An awaited put is the backpressure: if the workers cannot
                     # keep up, the reader slows down instead of the queue
                     # growing until the process dies.

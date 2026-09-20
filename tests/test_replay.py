@@ -98,3 +98,28 @@ def test_backlog_keeps_only_the_most_recent():
         backlog.add(Verdict(comment=None, lane=Lane.APPROVED, gate_confidence=i))
     assert len(backlog) == 3
     assert [v.gate_confidence for v in backlog.recent(3)] == [7, 8, 9]
+
+
+async def test_replay_pauses_without_demand(store):
+    """A judge with no audience should not be spending money. Eight orphaned dev
+    servers judging at ~225/sec drained the account's credits."""
+    queue: asyncio.Queue = asyncio.Queue()
+    demand = asyncio.Event()  # deliberately not set
+    task = asyncio.create_task(Replay(store, rate=0, shuffle=False, demand=demand).run(queue))
+    try:
+        await asyncio.sleep(0.05)
+        assert queue.qsize() == 0, "dripped with nobody watching"
+        demand.set()
+        await asyncio.sleep(0.05)
+        assert queue.qsize() > 0, "did not resume when a client connected"
+    finally:
+        task.cancel()
+
+
+async def test_replay_with_no_demand_gate_is_always_on(store):
+    """The console runner has no sockets, so `None` must mean always-on."""
+    queue: asyncio.Queue = asyncio.Queue()
+    task = asyncio.create_task(Replay(store, rate=0, shuffle=False, demand=None).run(queue))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    assert queue.qsize() > 0
