@@ -83,11 +83,16 @@ From `docs.typesafe.ai/model-jaggedness/jev-1.13`:
 
 Confidence on a Score *is* the concentration of probability across levels. Overlapping levels split the probability and look identical to a hard comment. So:
 
-1. **Describe situations, not degrees.**
+1. **Make the levels one unambiguous ordering.** This is the actual mechanism.
 2. **One situation per level.** No level containing "X, or Y".
 3. **One thing per question.**
+4. *Describe situations, not degrees* — the docs' rule, and a good heuristic for (1), but **not reliable on its own.** The winning `hostility` levels are a degree ladder ("mildly pointed", "openly critical", "sustained abuse") and they beat two careful situational rewrites by 0.114 and 0.099 on both corpora. Both rewrites had smuggled in a rung that was a different dimension rather than a lower degree, and probability split between it and its neighbour.
 
-Evidence: rewriting the `on_topic` levels to these rules moved its confidence **+0.165 ± 0.012** (paired, n=300). It did **not** improve accuracy — the rewrite was a wash on which comments got called correctly — and it made `hostility` confidence *worse* by 0.083, because v1's hostility levels were already close to situational. So: apply the rules **per axis**, judged on that axis's confidence, not as a wholesale rubric version bump.
+Evidence: `experiments/axis_ab.py`, paired, n=300 each on Hacker News and Civil Comments. Per-axis winners differ — `hostility` v1, `substance` v2, `on_topic` v3 — so apply the rules **per axis, judged on that axis's confidence**, never as a wholesale version bump.
+
+**Score every variant inside one request.** Questions are evaluated independently against a shared state, so all variants of all axes can go in together. That gives perfect pairing and removes the arm-order confound that sequential arms carry. There is no reason to run a rubric contest any other way.
+
+Diminishing returns are real: `contempt`'s three variants span only 0.034 against `hostility`'s 0.114, and two of them were written specifically to fix it. When an axis stops responding to rewording, stop rewording it.
 
 A rubric problem masquerades as a model problem — when the Pen floods, check per-axis confidence before touching the floor.
 

@@ -87,10 +87,18 @@ calibration curve down.
 Cheap, and each one changes a number that the UI will display. Do these before
 building the thing that displays them.
 
-- [~] **2.1 Per-axis rubric — now the highest-value task in the project.** `FINDINGS.md` §3 and §10
-  - [x] `on_topic` rewritten to a single referent: 0.354 → 0.450 on a real thread. It had two competing referents in one question, which only surfaced once real parent context existed
-  - [ ] **`hostility` and `contempt` are what pen comments now.** Both sit at ~0.67 on real data, and `decisive` takes the minimum of the two on every comment, giving 0.538 and a 84% Pen. v1's `hostility` levels beat v2's by 0.083 and that combination is still untested
-  - *Done when:* a paired run says which per-axis mix wins on each axis, and `judge/rubric.py` holds that mix
+- [x] **2.1 Per-axis rubric** — `FINDINGS.md` §11, via `experiments/axis_ab.py`
+  - [x] `on_topic` → single referent, +0.147 paired
+  - [x] `hostility` → the **degree ladder** wins by 0.114 over two situational rewrites, on both corpora, with no accuracy cost. `hostility` is now 0.813, the strongest axis in the rubric
+  - [x] `substance` → situational phrasing wins by 0.045
+  - [x] `contempt` → the one axis where confidence and accuracy disagreed. Took the 16:6 accuracy win over a marginal 0.028 confidence loss
+  - [x] all variants scored **inside one request**, which gives perfect pairing and kills the arm-order confound in `FINDINGS.md` §7. Run every future rubric contest this way
+  - **Outcome:** decisive confidence 0.538 → 0.599, auto-handled at floor 0.60 went 49% → 60%. But **16% at the current 0.85 floor, unchanged** — fixing `hostility` handed the bottleneck to `contempt`, whose three variants span only 0.034 and which looks close to its ceiling
+- [ ] **2.1b Gate on the decision, not on the level** — `FINDINGS.md` §12, now the highest-value task
+  - `ScoreAnswer.confidence` measures probability concentration across the five levels. The lane turns on which **side of the severity threshold** the score falls, which is a different question — a comment spread across levels 0/1/2 is uncertain about the level and certain about the decision, and currently pens for no reason
+  - `ScoreAnswer.probabilities` makes this directly computable: `p_over = sum(p for level, p in probabilities.items() if level >= OVER_AT)`
+  - still calibrated, still routes genuine uncertainty to a human, does not touch the floor — which §4 said the fix must not do
+  - *Done when:* measured against the current gate on the same thread, and `judge/lanes.py` holds whichever wins
 - [x] **2.2 Measure confidence on data with real thread context** — `experiments/thread_probe.py`
   - the answer corrected `FINDINGS.md` §5 rather than confirming it: thread context did **not** rescue `on_topic`, it exposed a rubric ambiguity that Civil Comments had been hiding
   - `CONFIDENCE_FLOOR` deliberately **not** re-set yet — it should move after 2.1, not before, or we would be tuning the floor around a rubric we already know is fixable

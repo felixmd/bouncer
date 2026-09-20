@@ -305,3 +305,114 @@ against Civil Comments. These two axes are intrinsic to the comment's own text,
 they get no thread context by design, and they behave identically across two
 very different corpora. That is a good sign for the rubric being stable; it just
 needs to be *sharper*.
+
+## 11. Rubric levels, picked one axis at a time
+
+`experiments/axis_ab.py`, 2026-09-20. 300 Hacker News comments for confidence
+under real thread context, 300 labelled Civil Comments for accuracy on the two
+intrinsic axes.
+
+**All variants went in the same request.** Jev evaluates questions
+independently against one shared state, so `c000__hostility__v1` and
+`c000__hostility__v3` are just two questions about the same comment. That gives
+perfect pairing and removes the arm-order confound §7 listed as an open
+weakness. It is strictly better than the sequential-arms design used earlier and
+any future rubric contest should be run this way.
+
+Mean confidence, Hacker News:
+
+| axis | v1 | v2 | v3 | winner |
+|---|---|---|---|---|
+| `hostility` | **0.824** | 0.710 | 0.725 | **v1**, by 0.114 *** |
+| `contempt` | 0.682 | 0.648 | 0.654 | see below |
+| `substance` | 0.658 | **0.703** | — | **v2**, by 0.045 *** |
+| `on_topic` | — | 0.284 | **0.431** | **v3**, by 0.147 *** |
+
+Accuracy against the human label was a wash on `hostility` (10:12 and 9:8 on
+discordant comments — differently wrong, not better), so the confidence result
+decides it uncontested.
+
+### The "situations, not degrees" rule is real but it is not the mechanism
+
+This is the part worth keeping. `hostility` v1 **is the degree ladder** —
+"mildly pointed", "openly critical", "sustained abuse" — and it beat two
+careful situational rewrites by 0.114 and 0.099, on both corpora.
+
+So the rule as stated in the docs, and as this project had been applying it,
+over-generalises. What actually predicts confidence is whether the levels form
+**one unambiguous ordering**. Both situational rewrites smuggled in a rung that
+was a different dimension rather than a lower degree — v2's "reports what a
+person did or said, without judging them" is not less hostile than level 0, it
+is *orthogonal* to it — and probability split between it and its neighbour.
+
+Situational phrasing usually produces a cleaner ordering, which is why the rule
+works most of the time and why it won `substance` and `on_topic` here. It is a
+heuristic for the real thing, not the real thing.
+
+### `contempt` is the one axis where confidence and accuracy disagreed
+
+v1 is 0.028 more confident (about 2 sigma, marginal). v3 is meaningfully more
+accurate: **16:6** on the comments where the two disagree. v3 was taken. 0.028
+is noise next to hostility's 0.114, and being right is what the product is for.
+
+### `contempt` also looks like it has a floor
+
+All three variants land between 0.648 and 0.682 — a spread of 0.034 across
+three genuinely different phrasings, against `hostility`'s spread of 0.114 and
+`on_topic`'s 0.147. Two of the three were written specifically to fix it.
+
+The most likely reading is that contempt is simply a harder judgement than the
+others, and that ~0.66 is close to what this model can do on it. Further rubric
+work on this axis looks like poor value.
+
+### Net effect on the demo
+
+Applying the per-axis mix and re-probing the same Hacker News thread:
+
+| | before | after |
+|---|---|---|
+| `hostility` confidence | 0.675 | **0.813** |
+| `contempt` confidence | 0.666 | 0.640 |
+| decisive confidence | 0.538 | **0.599** |
+| auto-handled at floor 0.70 | 35% | **41%** |
+| auto-handled at floor 0.60 | 49% | **60%** |
+| auto-handled at floor 0.85 | 16% | 16% |
+
+The curve moved right, but **not at the current floor**, because `decisive`
+takes `min(hostility, contempt)` and `contempt` is now the binding axis on
+almost every comment. Fixing `hostility` handed the bottleneck to the axis that
+appears to have a floor.
+
+## 12. The gate is asking the wrong question — the next move
+
+Rubric work has taken `hostility` as far as it goes and `contempt` looks close
+to its ceiling, yet 84% of traffic still pens. That points at the gate rather
+than the rubric, and there is a specific reason to think it is wrong.
+
+`ScoreAnswer.confidence` measures **how concentrated the probability is across
+the five levels**. The lane decision does not need that. It needs to know which
+**side of the severity threshold** the comment falls on.
+
+Those are very different questions. A comment whose probability is spread
+evenly across levels 0, 1 and 2 has low confidence — the model genuinely does
+not know which level — while every one of those levels is far below the
+threshold. The *level* is uncertain and the *decision* is not. Under the current
+gate that comment goes to the Pen, and a human is asked to adjudicate a
+judgement the model was never actually unsure about.
+
+`ScoreAnswer` carries `probabilities`, a per-level distribution, so this is
+directly computable:
+
+```python
+p_over = sum(p for level, p in answer.probabilities.items() if level >= OVER_AT)
+decision_confidence = max(p_over, 1 - p_over)
+```
+
+That is still calibrated confidence and still routes genuine uncertainty to a
+human — it just measures uncertainty about the thing the lane actually turns on.
+It should move Pen volume substantially without touching the floor, which is
+what §4 said the fix must not be.
+
+**Untested.** The probe records scores and confidences but not the
+distributions, so measuring it needs one more run. This is the next task, and it
+is more likely to matter than any further rubric work.

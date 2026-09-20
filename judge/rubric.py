@@ -57,46 +57,58 @@ class Axis:
         return Score(instructions=instructions, criteria=list(self.levels))
 
 
-# Level descriptions name *situations*, not degrees. That is the Score docs'
-# instruction and it is not cosmetic: the first version of this rubric was a
-# degree ladder ("mildly pointed", "openly critical", "sustained abuse") and its
-# contempt level 0 read "treats disagreement as legitimate, *or* does not engage
-# with opposing views at all" — two situations in one level. Two of the three
-# documented causes of low confidence, in one rubric. Rewriting to situations
-# raised hostility recall from 0.43 to 0.57 and on_topic confidence from 0.34 to
-# 0.50 in experiments/rubric_ab.py.
+# These levels are picked **per axis**, each from a paired head-to-head over
+# 300 Hacker News comments and 300 labelled Civil Comments, all variants scored
+# inside the same request (experiments/axis_ab.py, FINDINGS §11). A wholesale
+# "v2" rewrite lost on two axes and won on two; the mix below is the winner of
+# each contest, not a version.
+#
+# The rule the Score docs give — describe situations, not degrees — is real but
+# it is not the whole story. `hostility` below is the *degree ladder*, and it
+# beat two situational rewrites by 0.114 and 0.099. What actually predicts
+# confidence is whether the levels form one unambiguous ordering: the
+# situational rewrites each smuggled in a rung that was a different dimension
+# rather than a lower degree, and probability split between it and its neighbour.
 
+# WINNER by 0.114 over the situational rewrite, on both corpora, with no
+# accuracy cost (10:12 and 9:8 on discordant comments — differently wrong, not
+# better). The highest-confidence axis in the rubric at 0.824.
 HOSTILITY = Axis(
     key="hostility",
     question="is it attacking a person?",
     levels=[
-        "The comment is about a topic, an event, a policy or an idea. No person is described.",
-        "The comment reports what a person did or said, without judging them for it.",
-        "The comment says a person is wrong, mistaken, hypocritical, or behaving badly.",
-        "The comment calls a person a name, mocks them, or says what kind of person they are.",
-        "The comment swears at a person, uses degrading language about them, or says they "
-        "deserve harm.",
+        "Addresses ideas, events or the situation only. No personal remarks about anyone.",
+        "Mildly pointed at a person — a dig or a sarcastic aside, not an attack.",
+        "Openly critical of a person's character, motives or intelligence, but not abusive.",
+        "A direct personal attack: insults, name-calling, or open hostility toward someone.",
+        "Sustained abuse of a person: degrading language, or wishing harm on them.",
     ],
     higher_is_worse=True,
     needs_thread_context=False,
 )
 
+# The one axis where confidence and accuracy disagreed, and the only judgement
+# call in the set. These levels are 0.028 *less* confident than the incumbent
+# (about 2 sigma, marginal) but meaningfully more accurate against the human
+# label — 16:6 on the comments where the two disagree. Accuracy wins: 0.028 is
+# noise next to hostility's 0.114, and being right is what the product is for.
+# Revisit if Pen volume ever turns on this axis.
 CONTEMPT = Axis(
     key="contempt",
-    question="how does it treat people who hold the opposing view?",
+    question="how is a differing view treated?",
     levels=[
-        "The comment does not refer to anyone who disagrees.",
-        "The comment answers an opposing argument on its merits.",
-        "The comment says the opposing side is wrong without saying why.",
-        "The comment says the opposing argument is not worth discussing, or refuses to engage "
-        "with it.",
-        "The comment says the people who hold the opposing view are stupid, dishonest, or "
-        "beneath replying to.",
+        "No differing view is addressed.",
+        "A differing view is answered on its merits.",
+        "A differing view is called wrong, with no reason given.",
+        "A differing view is called not worth discussing, or is refused engagement.",
+        "The people who hold it are called stupid, dishonest, or not worth replying to.",
     ],
     higher_is_worse=True,
     needs_thread_context=False,
 )
 
+# WINNER by 0.045 over the degree-ladder phrasing. The best-behaved axis at
+# 0.703, and the only one where the situational rewrite clearly paid.
 SUBSTANCE = Axis(
     key="substance",
     question="what does it add to the discussion?",
